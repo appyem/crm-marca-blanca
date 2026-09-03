@@ -12,13 +12,11 @@ export default function DashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Si no está cargando y no hay usuario, redirigir al login
     if (!loading && !user) {
       router.push('/login');
     }
   }, [user, loading, router]);
 
-  // Mostrar loading mientras verifica la autenticación
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-50">
@@ -30,7 +28,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Si no hay usuario después de cargar, no renderizar nada (ya se redirigió)
   if (!user) {
     return null;
   }
@@ -51,49 +48,6 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
             <p className="mt-1 text-gray-600">Bienvenido, {user.displayName || user.email}</p>
-            
-            {/* BOTONES DE PRUEBA DE SEGURIDAD (Solo para SUPER_ADMIN) */}
-            {user.role === 'SUPER_ADMIN' && (
-              <div className="mt-4 flex gap-3">
-                <button
-                  onClick={async () => {
-                    try {
-                      const { collection, addDoc } = await import('firebase/firestore');
-                      const { db } = await import('@/lib/firebase/client');
-                      const docRef = await addDoc(collection(db, 'tenants', user.tenantId, 'test'), {
-                        message: 'Prueba de aislamiento legítima',
-                        timestamp: new Date()
-                      });
-                      alert('✅ ÉXITO: Documento creado en TU tenant: ' + docRef.id);
-                    } catch (error) {
-                      alert('❌ Error: ' + (error instanceof Error ? error.message : 'Error desconocido'));
-                    }
-                  }}
-                  className="rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 transition-colors"
-                >
-                  ✅ Probar MI Tenant
-                </button>
-                <button
-                  onClick={async () => {
-                    try {
-                      const { collection, addDoc } = await import('firebase/firestore');
-                      const { db } = await import('@/lib/firebase/client');
-                      // Intentar escribir en un tenant que NO es el tuyo
-                      const docRef = await addDoc(collection(db, 'tenants', 'otro-tenant-falso', 'test'), {
-                        message: 'Intento de hackeo',
-                        timestamp: new Date()
-                      });
-                      alert('🚨 VULNERABILIDAD: ¡Se permitió acceso cruzado! ID: ' + docRef.id);
-                    } catch (error) {
-                      alert('🔒 SEGURIDAD OK: Acceso denegado a otro tenant.\n\n' + (error instanceof Error ? error.message : 'Error desconocido'));
-                    }
-                  }}
-                  className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
-                >
-                  🚨 Probar OTRO Tenant (Hack)
-                </button>
-              </div>
-            )}
           </div>
           <button
             onClick={handleLogout}
@@ -118,67 +72,59 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <Link 
-  href="/contacts" 
-  style={{
-    display: 'block',
-    padding: '24px',
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
-    textDecoration: 'none',
-    transition: 'box-shadow 0.2s'
-  }}
-  onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}
-  onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 0 rgba(0, 0, 0, 0.1)'}
->
-  <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>
-    Contactos y Leads
-  </h2>
-  <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>
-    Gestiona tu base de datos de clientes, prospectos y leads.
-  </p>
-  <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>
-    Ver contactos →
-  </span>
-</Link>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+          
+          {/* Tarjeta 1: Contactos */}
+          <Link 
+            href="/contacts" 
+            style={{ display: 'block', padding: '24px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', textDecoration: 'none', transition: 'box-shadow 0.2s' }}
+            onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}
+            onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 0 rgba(0, 0, 0, 0.1)'}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>Contactos y Leads</h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>Gestiona tu base de datos de clientes, prospectos y leads.</p>
+            <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>Ver contactos →</span>
+          </Link>
 
+          {/* Tarjeta 2: Empresas */}
+          <Link 
+            href="/companies" 
+            style={{ display: 'block', padding: '24px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', textDecoration: 'none', transition: 'box-shadow 0.2s' }}
+            onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}
+            onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 0 rgba(0, 0, 0, 0.1)'}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>Empresas</h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>Gestiona las empresas y organizaciones con las que trabajas.</p>
+            <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>Ver empresas →</span>
+          </Link>
 
-<Link 
-  href="/companies" 
-  style={{
-    display: 'block',
-    padding: '24px',
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
-    textDecoration: 'none'
-  }}
->
-  <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>
-    Empresas
-  </h2>
-  <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>
-    Gestiona las empresas y organizaciones con las que trabajas.
-  </p>
-  <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>
-    Ver empresas →
-  </span>
-</Link>
+          {/* Tarjeta 3: Oportunidades */}
+          <Link 
+            href="/opportunities" 
+            style={{ display: 'block', padding: '24px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', textDecoration: 'none', transition: 'box-shadow 0.2s' }}
+            onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}
+            onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 0 rgba(0, 0, 0, 0.1)'}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>Oportunidades</h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>Gestiona tu pipeline comercial y sigue el progreso de tus ventas.</p>
+            <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>Ver pipeline →</span>
+          </Link>
 
+          {/* Tarjeta 4: Plantillas de Correo (NUEVA) */}
+          <Link 
+            href="/email" 
+            style={{ display: 'block', padding: '24px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', textDecoration: 'none', transition: 'box-shadow 0.2s' }}
+            onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}
+            onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 0 rgba(0, 0, 0, 0.1)'}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>Plantillas de Correo</h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>Crea y gestiona plantillas de email con variables dinámicas.</p>
+            <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>Ver plantillas →</span>
+          </Link>
 
-<Link 
-  href="/opportunities" 
-  style={{ display: 'block', padding: '24px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', textDecoration: 'none' }}
->
-  <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>Oportunidades</h2>
-  <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>
-    Gestiona tu pipeline comercial y sigue el progreso de tus ventas.
-  </p>
-  <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>Ver pipeline →</span>
-</Link>
+        </div>
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mt-8">
           <div className="rounded-lg bg-white p-6 shadow">
             <h2 className="text-lg font-semibold text-gray-900">Información del Usuario</h2>
             <dl className="mt-4 space-y-2">
