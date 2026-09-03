@@ -12,12 +12,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* SOLUCIÓN: Forzar texto oscuro y fondo blanco en todos los campos de formulario */
+input, select, textarea {
+  background-color: #ffffff !important;
+  color: #111827 !important; /* Gris muy oscuro, casi negro */
 }
+
+/* Opcional: Si en el futuro quieres que toda la app respete el modo oscuro de forma nativa, 
+   podremos ajustar las variables, pero por ahora esto garantiza que todo sea legible. */
 
 body {
   background: var(--background);
