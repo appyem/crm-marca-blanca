@@ -118,6 +118,66 @@ export default function DashboardPage() {
           </div>
         )}
 
+        <Link 
+  href="/contacts" 
+  style={{
+    display: 'block',
+    padding: '24px',
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
+    textDecoration: 'none',
+    transition: 'box-shadow 0.2s'
+  }}
+  onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}
+  onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 0 rgba(0, 0, 0, 0.1)'}
+>
+  <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>
+    Contactos y Leads
+  </h2>
+  <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>
+    Gestiona tu base de datos de clientes, prospectos y leads.
+  </p>
+  <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>
+    Ver contactos →
+  </span>
+</Link>
+
+
+<Link 
+  href="/companies" 
+  style={{
+    display: 'block',
+    padding: '24px',
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
+    textDecoration: 'none'
+  }}
+>
+  <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>
+    Empresas
+  </h2>
+  <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>
+    Gestiona las empresas y organizaciones con las que trabajas.
+  </p>
+  <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>
+    Ver empresas →
+  </span>
+</Link>
+
+
+<Link 
+  href="/opportunities" 
+  style={{ display: 'block', padding: '24px', backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', textDecoration: 'none' }}
+>
+  <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>Oportunidades</h2>
+  <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '16px' }}>
+    Gestiona tu pipeline comercial y sigue el progreso de tus ventas.
+  </p>
+  <span style={{ fontSize: '14px', fontWeight: '500', color: '#2563eb' }}>Ver pipeline →</span>
+</Link>
+
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg bg-white p-6 shadow">
             <h2 className="text-lg font-semibold text-gray-900">Información del Usuario</h2>
