@@ -17,6 +17,7 @@ export interface UserSession {
   displayName: string | null;
   role: UserRole;
   tenantId: string;
+  tenantName?: string; // Nombre del tenant para mostrar en UI
 }
 
 export interface AuthError {

@@ -68,17 +68,28 @@ export const authService = {
     }
   },
 
-  /**
-   * Establece una cookie de sesión para el middleware
+    /**
+   * Establece una cookie de sesión y sincroniza los Custom Claims
    */
   async setSessionCookie(): Promise<void> {
     const user = auth.currentUser;
     if (user) {
-      // Obtener el token de ID del usuario
       const token = await user.getIdToken();
       
-      // Establecer cookie (válida por 5 días)
-      document.cookie = `__session=${token}; max-age=${5 * 24 * 60 * 60}; path=/; SameSite=Strict; Secure`;
+      // 1. Sincronizar claims con Firestore
+      await fetch('/api/auth/sync-claims', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      // 2. Forzar la renovación del token para que incluya los nuevos claims
+      const freshToken = await user.getIdToken(true);
+      
+      // 3. Establecer la cookie con el token fresco (válida por 5 días)
+      document.cookie = `__session=${freshToken}; max-age=${5 * 24 * 60 * 60}; path=/; SameSite=Strict; Secure`;
     }
   },
 

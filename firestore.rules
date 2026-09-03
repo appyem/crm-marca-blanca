@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- FUNCIONES DE AYUDA ---
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isTenantMember(tenantId) {
+      return isAuthenticated() 
+        && request.auth.token.tenantId == tenantId;
+    }
+    
+    function hasRole(roles) {
+      return isAuthenticated()
+        && request.auth.token.roles.hasAny(roles);
+    }
+
+    // --- COLECCIÓN DE TENANTS ---
+    match /tenants/{tenantId} {
+      // Cualquier usuario autenticado puede leer su propio tenant
+      allow read: if isAuthenticated() && request.auth.token.tenantId == tenantId;
+      // Solo SUPER_ADMIN puede crear, actualizar o borrar tenants
+      allow create, update, delete: if hasRole(['SUPER_ADMIN']);
+      
+      // --- SUBCOLECCIONES DEL TENANT (Aislamiento estricto) ---
+      match /{document=**} {
+        allow read, write: if isTenantMember(tenantId);
+      }
+    }
+    
+    // --- COLECCIÓN DE USUARIOS ---
+    match /users/{userId} {
+      // Un usuario puede leer su propio perfil, o un admin de su mismo tenant
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        request.auth.token.tenantId == resource.data.tenantId ||
+        hasRole(['SUPER_ADMIN'])
+      );
+      
+      // Crear: Solo SUPER_ADMIN o TENANT_ADMIN, y debe coincidir el tenantId
+      allow create: if isAuthenticated() && (
+        hasRole(['SUPER_ADMIN', 'TENANT_ADMIN'])
+      ) && request.resource.data.tenantId == request.auth.token.tenantId;
+      
+      // Actualizar: El propio usuario, o admins de su tenant
+      allow update: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        hasRole(['TENANT_ADMIN', 'SUPER_ADMIN'])
+      );
+      
+      // Eliminar: Solo admins
+      allow delete: if hasRole(['TENANT_ADMIN', 'SUPER_ADMIN']);
+    }
+
+    // --- DENEGACIÓN POR DEFECTO ---
+    // Nada más es accesible a menos que se especifique explícitamente arriba
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
