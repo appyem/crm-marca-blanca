@@ -113,7 +113,7 @@ export default function EmailTemplatesPage() {
     setTestVariables(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleSendTest = async (e: React.FormEvent) => {
+    const handleSendTest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTemplate || !user) return;
 
@@ -122,6 +122,7 @@ export default function EmailTemplatesPage() {
 
     try {
       const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('No se pudo obtener el token de sesión. Por favor recarga la página.');
       
       const response = await fetch('/api/email/send', {
         method: 'POST',
@@ -138,17 +139,27 @@ export default function EmailTemplatesPage() {
         }),
       });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Error al enviar el correo');
+      // Intentar leer el error como texto primero por si no es JSON válido
+      const textResponse = await response.text();
+      
+      let result;
+      try {
+        result = JSON.parse(textResponse);
+      } catch {
+        // Si no es JSON, es un error de Next.js o HTML
+        throw new Error(`El servidor devolvió un error inesperado (Status: ${response.status}). Revisa la terminal de npm run dev.`);
       }
 
-      alert('✅ Correo de prueba enviado exitosamente. Revisa tu bandeja de entrada (o spam).');
+      if (!response.ok) {
+        throw new Error(result.error || `Error del servidor (${response.status})`);
+      }
+
+      alert('✅ ¡Correo de prueba enviado exitosamente! Revisa tu bandeja de entrada (y la carpeta de Spam).');
       setIsTestModalOpen(false);
-    } catch (err: any) {
-      setError(err.message || 'Error desconocido al enviar.');
-      console.error(err);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Error desconocido al enviar.';
+      setError(errorMessage);
+      console.error('Error capturado en frontend:', err);
     } finally {
       setIsSendingTest(false);
     }
