@@ -34,6 +34,7 @@ export interface Contact {
   phone?: string;
   whatsapp?: string;
   companyId?: string; // Relación con Empresa
+  companyName?: string;
   jobTitle?: string;
   city?: string;
   country?: string;
