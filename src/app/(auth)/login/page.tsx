@@ -6,6 +6,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { authService } from '@/services/auth.service';
 import { AuthError } from '@/types/auth.types';
+// 1. Importamos auth y db para verificar el estado del usuario
+import { auth, db } from '@/lib/firebase/client';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,12 +23,29 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+      // 1. Intentar iniciar sesión
       await authService.signIn(email, password);
-      // Redirigir al dashboard después del login exitoso
+      
+      // 2. Verificar si el usuario debe cambiar su contraseña
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        // Consultamos el documento del usuario en Firestore
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        const userData = userDoc.data();
+        
+        // 3. Si la bandera es true, redirigir a la página de cambio de contraseña
+        if (userData?.mustChangePassword === true) {
+          router.push('/change-password');
+          return; // Detenemos la ejecución aquí para NO redirigir al dashboard
+        }
+      }
+      
+      // 4. Si todo está bien (o es un usuario antiguo sin la bandera), ir al dashboard
       router.push('/dashboard');
+      
     } catch (err: unknown) {
       const authError = err as AuthError;
-      setError(authError.message);
+      setError(authError.message || 'Error al iniciar sesión. Verifica tus credenciales.');
     } finally {
       setIsLoading(false);
     }
@@ -89,7 +109,8 @@ export default function LoginPage() {
           >
             {isLoading ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
-                    <div className="text-center text-sm">
+          
+          <div className="text-center text-sm">
             <span className="text-gray-600">¿No tienes cuenta? </span>
             <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
               Regístrate

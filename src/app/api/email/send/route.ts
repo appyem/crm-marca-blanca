@@ -1,29 +1,26 @@
 // src/app/api/email/send/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
-import { renderTemplate } from '@/services/email.service';
+import { renderTemplate, emailService } from '@/services/email.service';
 import { emailServiceServer } from '@/services/email.service.server';
 import { getFirebaseAdmin } from '@/lib/firebase/admin';
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validar que la clave de Resend exista
     if (!process.env.RESEND_API_KEY) {
-      console.error('ERROR: Falta RESEND_API_KEY en el entorno del servidor.');
-      return NextResponse.json({ error: 'Configuración de servidor incompleta (Falta RESEND_API_KEY).' }, { status: 500 });
+      return NextResponse.json({ error: 'Configuración de servidor incompleta.' }, { status: 500 });
     }
 
-    // 2. Inicializar Resend DENTRO de la petición
     const resend = new Resend(process.env.RESEND_API_KEY);
 
-    // 3. Validar autenticación del usuario
+    // 1. Autenticación
     const authHeader = request.headers.get('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'No autorizado (Falta token).' }, { status: 401 });
+      return NextResponse.json({ error: 'No autorizado.' }, { status: 401 });
     }
 
     const token = authHeader.split('Bearer ')[1];
-    const { auth: adminAuth } = getFirebaseAdmin();
+    const { auth: adminAuth, db } = getFirebaseAdmin();
     
     let tenantId: string;
     try {
@@ -32,10 +29,10 @@ export async function POST(request: NextRequest) {
       if (!tenantId) throw new Error('Token sin tenantId');
     } catch (authError) {
       console.error('Error de autenticación:', authError);
-      return NextResponse.json({ error: 'Token inválido o expirado. Cierra sesión y vuelve a entrar.' }, { status: 401 });
+      return NextResponse.json({ error: 'Token inválido o expirado.' }, { status: 401 });
     }
 
-    // 4. Obtener y validar datos
+    // 2. Obtener datos del cuerpo
     const body = await request.json();
     const { templateId, to, subject, bodyText, variables } = body;
 
@@ -43,11 +40,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Faltan datos obligatorios.' }, { status: 400 });
     }
 
-    // 5. Renderizar plantilla
+    // 3. Renderizar plantilla
     const finalSubject = renderTemplate(subject, variables || {});
     const finalBody = renderTemplate(bodyText, variables || {});
 
-    // 6. Registrar intento en Firestore USANDO ADMIN SDK (sin reglas de seguridad)
+    // 4. Registrar en Firestore
     await emailServiceServer.logEmail(tenantId, {
       templateId: templateId || undefined,
       to,
@@ -56,11 +53,17 @@ export async function POST(request: NextRequest) {
       status: 'PENDING',
     });
 
-    // 7. Enviar con Resend
+    // 5. OBTENER EL NOMBRE DEL TENANT DINÁMICAMENTE
+    const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+    const tenantData = tenantDoc.data();
+    // Usamos 'name' o 'companyName' del tenant, con fallback a 'CRM App'
+    const senderName = tenantData?.name || tenantData?.companyName || 'CRM App';
     const fromEmail = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+    const finalFrom = `${senderName} <${fromEmail}>`;
 
+    // 6. Enviar con Resend usando el nombre dinámico
     const { data, error } = await resend.emails.send({
-      from: `Appyempresa S.A.S <${fromEmail}>`,
+      from: finalFrom,
       to: [to],
       subject: finalSubject,
       html: finalBody,
@@ -68,10 +71,7 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('Error específico de Resend:', error);
-      return NextResponse.json({ 
-        success: false, 
-        error: `Error de Resend: ${error.message || 'Error desconocido al enviar'}` 
-      }, { status: 400 });
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
     }
 
     return NextResponse.json({ success: true, messageId: data?.id });

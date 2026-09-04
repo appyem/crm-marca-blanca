@@ -6,6 +6,7 @@ import {
   getDoc, 
   updateDoc, 
   getDocs,
+  deleteDoc,
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
@@ -167,12 +168,28 @@ export const tenantService = {
   },
 
   /**
-   * Cambia el plan de un tenant
+   * Cambia el plan de un tenant y actualiza los límites automáticamente
    */
   async updateTenantPlan(tenantId: string, plan: TenantPlan): Promise<void> {
     await this.updateTenant(tenantId, {
       plan,
       limits: DEFAULT_LIMITS[plan],
     });
+  },
+
+  /**
+   * Elimina un tenant (Advertencia: no borra subcolecciones automáticamente)
+   */
+  async deleteTenant(tenantId: string): Promise<void> {
+    await deleteDoc(doc(db, 'tenants', tenantId));
+  },
+
+  /**
+   * Obtiene estadísticas de uso del tenant (ej: correos enviados)
+   */
+  async getTenantStats(tenantId: string): Promise<{ emailsSent: number }> {
+    const emailLogsRef = collection(db, 'tenants', tenantId, 'emailLogs');
+    const snapshot = await getDocs(emailLogsRef);
+    return { emailsSent: snapshot.size };
   },
 };
