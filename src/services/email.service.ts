@@ -9,6 +9,8 @@ import {
   where, 
   orderBy, 
   and,
+  updateDoc,
+  deleteDoc,
   Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
@@ -65,6 +67,23 @@ export const emailService = {
     return docRef.id;
   },
 
+  async updateTemplate(
+    tenantId: string,
+    templateId: string,
+    updates: Partial<Omit<EmailTemplate, 'id' | 'tenantId' | 'createdAt'>>
+  ): Promise<void> {
+    const templateRef = doc(db, 'tenants', tenantId, 'emailTemplates', templateId);
+    await updateDoc(templateRef, {
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+
+  async deleteTemplate(tenantId: string, templateId: string): Promise<void> {
+    const templateRef = doc(db, 'tenants', tenantId, 'emailTemplates', templateId);
+    await deleteDoc(templateRef);
+  },
+
   async getActiveTemplatesByTenant(tenantId: string): Promise<EmailTemplate[]> {
     const templatesRef = collection(db, 'tenants', tenantId, 'emailTemplates');
     const q = query(
@@ -114,12 +133,9 @@ export const emailService = {
   },
 
   // ==========================================
-  // ANALÍTICAS (NUEVOS MÉTODOS - FASE 7.5)
+  // ANALÍTICAS
   // ==========================================
 
-  /**
-   * Obtiene las estadísticas agregadas de emails en un rango de fechas
-   */
   async getEmailStats(tenantId: string, queryData: EmailStatsQuery): Promise<EmailStats> {
     const logsRef = collection(db, 'tenants', tenantId, 'emailLogs');
     
@@ -166,9 +182,6 @@ export const emailService = {
     };
   },
 
-  /**
-   * Obtiene la lista de emails con filtros aplicados (para la tabla de analíticas)
-   */
   async getEmailLogsWithFilters(
     tenantId: string,
     queryData: EmailStatsQuery,
@@ -198,9 +211,6 @@ export const emailService = {
     return finalLogs.slice(0, limitCount);
   },
 
-  /**
-   * Obtiene el detalle de un email con todos sus eventos (timeline)
-   */
   async getEmailLogDetail(tenantId: string, logId: string): Promise<{ log: EmailLog; events: EmailEventLog[] } | null> {
     const logRef = doc(db, 'tenants', tenantId, 'emailLogs', logId);
     const logSnap = await getDoc(logRef);

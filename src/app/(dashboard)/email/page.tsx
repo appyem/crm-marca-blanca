@@ -8,9 +8,6 @@ import { auth } from '@/lib/firebase/client';
 import { emailService, renderTemplate } from '@/services/email.service';
 import { EmailTemplate } from '@/types/email.types';
 
-// ==========================================
-// VARIABLES DISPONIBLES (sincronizadas con el Excel de contactos)
-// ==========================================
 const CONTACT_FIELDS = [
   { key: 'firstName', label: 'Nombre', icon: '👤', example: 'Juan' },
   { key: 'lastName', label: 'Apellido', icon: '👤', example: 'Pérez' },
@@ -29,18 +26,19 @@ export default function EmailTemplatesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [initialized, setInitialized] = useState(false);
   
+  // Estado para edición
+  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
+  
   const [formData, setFormData] = useState({
     name: '',
     subject: '',
     body: '',
   });
 
-  // Refs para los campos de texto (para insertar variables en la posición del cursor)
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const [activeField, setActiveField] = useState<'subject' | 'body'>('subject');
 
-  // Estado para el modal de prueba de envío
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const [testEmail, setTestEmail] = useState('');
@@ -55,7 +53,7 @@ export default function EmailTemplatesPage() {
       const data = await emailService.getActiveTemplatesByTenant(user.tenantId);
       setTemplates(data);
     } catch (err) {
-      setError('Error al cargar las plantillas. Verifica que el índice de Firestore esté creado.');
+      setError('Error al cargar las plantillas.');
       console.error(err);
     } finally {
       setIsFetching(false);
@@ -69,15 +67,11 @@ export default function EmailTemplatesPage() {
     }
   }, [initialized, authLoading, user, loadData]);
 
-  // ==========================================
-  // INSERCIÓN AUTOMÁTICA DE VARIABLES
-  // ==========================================
   const insertVariable = (variableKey: string) => {
     const variableText = `{{${variableKey}}}`;
     const ref = activeField === 'subject' ? subjectRef.current : bodyRef.current;
     
     if (!ref) {
-      // Si no hay ref, insertar al final
       setFormData(prev => ({
         ...prev,
         [activeField]: prev[activeField] + variableText,
@@ -99,7 +93,6 @@ export default function EmailTemplatesPage() {
       [activeField]: newValue,
     }));
 
-    // Restaurar el cursor después de la variable insertada
     setTimeout(() => {
       const newPos = start + variableText.length;
       ref.focus();
@@ -112,9 +105,6 @@ export default function EmailTemplatesPage() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  // ==========================================
-  // EXTRACCIÓN AUTOMÁTICA DE VARIABLES DEL CONTENIDO
-  // ==========================================
   const extractVariables = (text: string): string[] => {
     const matches = text.match(/\{\{(\w+)\}\}/g);
     if (!matches) return [];
@@ -122,13 +112,44 @@ export default function EmailTemplatesPage() {
     const uniqueVars = new Set<string>();
     matches.forEach(match => {
       const varName = match.replace(/\{\{|\}\}/g, '');
-      // Solo incluir variables que existen en CONTACT_FIELDS
       if (CONTACT_FIELDS.some(f => f.key === varName)) {
         uniqueVars.add(varName);
       }
     });
     
     return Array.from(uniqueVars);
+  };
+
+  const openCreateModal = () => {
+    setEditingTemplate(null);
+    setFormData({ name: '', subject: '', body: '' });
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (template: EmailTemplate) => {
+    setEditingTemplate(template);
+    setFormData({
+      name: template.name,
+      subject: template.subject,
+      body: template.body,
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (template: EmailTemplate) => {
+    if (!user) return;
+    if (!confirm(`¿Estás seguro de eliminar la plantilla "${template.name}"?\n\nEsta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    try {
+      await emailService.deleteTemplate(user.tenantId, template.id);
+      await loadData();
+      alert('✅ Plantilla eliminada exitosamente');
+    } catch (err) {
+      setError('Error al eliminar la plantilla.');
+      console.error(err);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -139,26 +160,38 @@ export default function EmailTemplatesPage() {
     setError(null);
 
     try {
-      // Extraer variables automáticamente del asunto y cuerpo
       const allVariables = new Set<string>();
       extractVariables(formData.subject).forEach(v => allVariables.add(v));
       extractVariables(formData.body).forEach(v => allVariables.add(v));
       const variablesArray = Array.from(allVariables);
 
-      await emailService.createTemplate(user.tenantId, {
-        name: formData.name,
-        subject: formData.subject,
-        body: formData.body,
-        variables: variablesArray,
-        isActive: true,
-      });
+      if (editingTemplate) {
+        // EDITAR
+        await emailService.updateTemplate(user.tenantId, editingTemplate.id, {
+          name: formData.name,
+          subject: formData.subject,
+          body: formData.body,
+          variables: variablesArray,
+        });
+        alert('✅ Plantilla actualizada exitosamente');
+      } else {
+        // CREAR
+        await emailService.createTemplate(user.tenantId, {
+          name: formData.name,
+          subject: formData.subject,
+          body: formData.body,
+          variables: variablesArray,
+          isActive: true,
+        });
+        alert('✅ Plantilla creada exitosamente');
+      }
 
       setFormData({ name: '', subject: '', body: '' });
+      setEditingTemplate(null);
       setIsModalOpen(false);
       await loadData();
-      alert('✅ Plantilla creada exitosamente');
     } catch (err) {
-      setError('Error al crear la plantilla.');
+      setError('Error al guardar la plantilla.');
       console.error(err);
     } finally {
       setIsSubmitting(false);
@@ -167,7 +200,6 @@ export default function EmailTemplatesPage() {
 
   const openTestModal = (template: EmailTemplate) => {
     setSelectedTemplate(template);
-    // Pre-llenar con los valores de ejemplo de CONTACT_FIELDS
     const initialVars: Record<string, string> = {};
     template.variables.forEach(v => {
       const field = CONTACT_FIELDS.find(f => f.key === v);
@@ -191,7 +223,7 @@ export default function EmailTemplatesPage() {
 
     try {
       const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('No se pudo obtener el token de sesión. Por favor recarga la página.');
+      if (!token) throw new Error('No se pudo obtener el token de sesión.');
       
       const response = await fetch('/api/email/send', {
         method: 'POST',
@@ -214,25 +246,24 @@ export default function EmailTemplatesPage() {
       try {
         result = JSON.parse(textResponse);
       } catch {
-        throw new Error(`El servidor devolvió un error inesperado (Status: ${response.status}). Revisa la terminal de npm run dev.`);
+        throw new Error(`Error inesperado del servidor (${response.status})`);
       }
 
       if (!response.ok) {
         throw new Error(result.error || `Error del servidor (${response.status})`);
       }
 
-      alert('✅ ¡Correo de prueba enviado exitosamente! Revisa tu bandeja de entrada.');
+      alert('✅ ¡Correo de prueba enviado exitosamente!');
       setIsTestModalOpen(false);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Error desconocido al enviar.';
       setError(errorMessage);
-      console.error('Error capturado en frontend:', err);
+      console.error(err);
     } finally {
       setIsSendingTest(false);
     }
   };
 
-  // Generar datos de ejemplo para el preview
   const getPreviewData = (): Record<string, string> => {
     const data: Record<string, string> = {};
     CONTACT_FIELDS.forEach(f => {
@@ -261,11 +292,11 @@ export default function EmailTemplatesPage() {
           </nav>
           
           <h1 style={{ marginBottom: '8px', fontSize: '30px', fontWeight: 'bold', color: '#111827' }}>Plantillas de Correo</h1>
-          <p style={{ marginBottom: '16px', fontSize: '16px', color: '#6b7280' }}>Crea, gestiona y prueba plantillas reutilizables con variables dinámicas.</p>
+          <p style={{ marginBottom: '16px', fontSize: '16px', color: '#6b7280' }}>Crea, edita y gestiona plantillas reutilizables con variables dinámicas.</p>
           
           <button
             type="button"
-            onClick={() => setIsModalOpen(true)}
+            onClick={openCreateModal}
             style={{ backgroundColor: '#2563eb', color: 'white', padding: '12px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
           >
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
@@ -281,7 +312,7 @@ export default function EmailTemplatesPage() {
           {templates.length === 0 ? (
             <div style={{ padding: '48px', textAlign: 'center' }}>
               <p style={{ color: '#6b7280', fontWeight: '500' }}>No hay plantillas registradas aún.</p>
-              <button onClick={() => setIsModalOpen(true)} style={{ marginTop: '16px', fontSize: '14px', fontWeight: '600', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>Crea tu primera plantilla</button>
+              <button onClick={openCreateModal} style={{ marginTop: '16px', fontSize: '14px', fontWeight: '600', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>Crea tu primera plantilla</button>
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
@@ -314,12 +345,26 @@ export default function EmailTemplatesPage() {
                         )}
                       </td>
                       <td style={{ padding: '16px 24px', fontSize: '14px' }}>
-                        <button 
-                          onClick={() => openTestModal(template)}
-                          style={{ padding: '6px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
-                        >
-                          Enviar Prueba
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            onClick={() => openEditModal(template)}
+                            style={{ padding: '6px 12px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                          >
+                            ✏️ Editar
+                          </button>
+                          <button 
+                            onClick={() => openTestModal(template)}
+                            style={{ padding: '6px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                          >
+                            📧 Probar
+                          </button>
+                          <button 
+                            onClick={() => handleDelete(template)}
+                            style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                          >
+                            🗑️ Eliminar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -329,16 +374,17 @@ export default function EmailTemplatesPage() {
           )}
         </div>
 
-        {/* MODAL: CREAR PLANTILLA */}
+        {/* MODAL: CREAR/EDITAR PLANTILLA */}
         {isModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
             <div style={{ width: '100%', maxWidth: '700px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
-                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>Nueva Plantilla</h2>
-                <button onClick={() => setIsModalOpen(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>
+                  {editingTemplate ? 'Editar Plantilla' : 'Nueva Plantilla'}
+                </h2>
+                <button onClick={() => { setIsModalOpen(false); setEditingTemplate(null); }} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
               </div>
 
-              {/* PANEL DE VARIABLES DISPONIBLES */}
               <div style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '8px', border: '1px solid #bae6fd' }}>
                 <p style={{ fontSize: '13px', fontWeight: '600', color: '#0369a1', marginBottom: '8px' }}>
                   📌 Variables Disponibles (haz clic para insertar)
@@ -364,23 +410,15 @@ export default function EmailTemplatesPage() {
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '6px',
-                        transition: 'all 0.15s',
                       }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#dbeafe';
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.backgroundColor = 'white';
-                      }}
+                      onMouseOver={(e) => { e.currentTarget.style.backgroundColor = '#dbeafe'; }}
+                      onMouseOut={(e) => { e.currentTarget.style.backgroundColor = 'white'; }}
                     >
                       <span>{field.icon}</span>
                       <span>{field.label}</span>
                     </button>
                   ))}
                 </div>
-                <p style={{ fontSize: '11px', color: '#0369a1', marginTop: '8px', fontStyle: 'italic' }}>
-                  💡 Las variables se detectan automáticamente al guardar. No necesitas escribirlas manualmente.
-                </p>
               </div>
 
               <form onSubmit={handleSubmit}>
@@ -398,9 +436,7 @@ export default function EmailTemplatesPage() {
                 </div>
 
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
-                    Asunto del Correo
-                  </label>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Asunto del Correo</label>
                   <input 
                     ref={subjectRef}
                     type="text" 
@@ -420,15 +456,10 @@ export default function EmailTemplatesPage() {
                       color: '#111827' 
                     }} 
                   />
-                  <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                    {activeField === 'subject' ? '✏️ Activo: haz clic en una variable arriba para insertarla aquí' : 'Haz clic aquí para activar este campo'}
-                  </p>
                 </div>
 
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
-                    Cuerpo del Correo
-                  </label>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Cuerpo del Correo</label>
                   <textarea 
                     ref={bodyRef}
                     name="body" 
@@ -437,7 +468,7 @@ export default function EmailTemplatesPage() {
                     onChange={handleInputChange} 
                     onFocus={() => setActiveField('body')}
                     rows={8} 
-                    placeholder="Ej: Hola, gracias por unirte a nuestra empresa. Estamos felices de tenerte con nosotros." 
+                    placeholder="Ej: Hola, gracias por unirte a nuestra empresa." 
                     style={{ 
                       width: '100%', 
                       padding: '8px 12px', 
@@ -450,16 +481,12 @@ export default function EmailTemplatesPage() {
                       resize: 'vertical'
                     }} 
                   />
-                  <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                    {activeField === 'body' ? '✏️ Activo: haz clic en una variable arriba para insertarla aquí' : 'Haz clic aquí para activar este campo'}
-                  </p>
                 </div>
                 
-                {/* VISTA PREVIA */}
                 {(formData.subject || formData.body) && (
                   <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
                     <p style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '12px', textTransform: 'uppercase' }}>
-                      👁️ Vista Previa (con datos de ejemplo)
+                      👁️ Vista Previa
                     </p>
                     {formData.subject && (
                       <div style={{ marginBottom: '8px' }}>
@@ -483,7 +510,7 @@ export default function EmailTemplatesPage() {
                 <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
                   <button 
                     type="button" 
-                    onClick={() => setIsModalOpen(false)} 
+                    onClick={() => { setIsModalOpen(false); setEditingTemplate(null); }} 
                     style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}
                   >
                     Cancelar
@@ -502,7 +529,7 @@ export default function EmailTemplatesPage() {
                       cursor: isSubmitting ? 'not-allowed' : 'pointer' 
                     }}
                   >
-                    {isSubmitting ? 'Guardando...' : 'Guardar Plantilla'}
+                    {isSubmitting ? 'Guardando...' : (editingTemplate ? 'Actualizar Plantilla' : 'Guardar Plantilla')}
                   </button>
                 </div>
               </form>
@@ -533,9 +560,7 @@ export default function EmailTemplatesPage() {
 
                 {selectedTemplate.variables.length > 0 && (
                   <div style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '8px' }}>
-                      Valores para las Variables (pre-llenados con ejemplos)
-                    </label>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '8px' }}>Valores para las Variables</label>
                     {selectedTemplate.variables.map(v => {
                       const field = CONTACT_FIELDS.find(f => f.key === v);
                       return (
