@@ -7,6 +7,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/firebase/client';
 import { crmService } from '@/services/crm.service';
 import { emailService } from '@/services/email.service';
+import { tenantService } from '@/services/tenant.service';
+import { importService, ParsedContact } from '@/services/import.service';
 import { Contact, ContactType } from '@/types/crm.types';
 import { EmailTemplate } from '@/types/email.types';
 
@@ -20,11 +22,18 @@ export default function ContactsPage() {
   const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [initialized, setInitialized] = useState(false);
-  
+
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [isSendingCampaign, setIsSendingCampaign] = useState(false);
+
+  // Estados del importador de Excel
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [parsedContacts, setParsedContacts] = useState<ParsedContact[]>([]);
+  const [isParsing, setIsParsing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -32,7 +41,7 @@ export default function ContactsPage() {
     email: '',
     phone: '',
     type: 'LEAD' as ContactType,
-    companyName: '', // Campo de texto simple para el nombre de la empresa
+    companyName: '',
   });
 
   const loadData = useCallback(async () => {
@@ -111,7 +120,7 @@ export default function ContactsPage() {
         email: formData.email,
         phone: formData.phone,
         type: formData.type,
-        companyName: formData.companyName || undefined, // Guardamos el texto directamente
+        companyName: formData.companyName || undefined,
         ownerId: user.uid,
         tags: [],
         consent: true,
@@ -123,7 +132,7 @@ export default function ContactsPage() {
       } else {
         await crmService.createContact(user.tenantId, contactPayload);
       }
-      
+
       setIsModalOpen(false);
       await loadData();
     } catch (err) {
@@ -134,6 +143,94 @@ export default function ContactsPage() {
     }
   };
 
+  // ===== LÓGICA DEL IMPORTADOR DE EXCEL =====
+  const openImportModal = () => {
+    setParsedContacts([]);
+    setImportProgress(0);
+    setIsImportModalOpen(true);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsParsing(true);
+    setError(null);
+    try {
+      const parsed = await importService.parseExcelFile(file);
+      setParsedContacts(parsed);
+    } catch (err) {
+      setError('No se pudo leer el archivo. Verifica que sea un Excel o CSV válido.');
+      console.error(err);
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (!user) return;
+    const validContacts = parsedContacts.filter(c => c.isValid);
+
+    if (validContacts.length === 0) {
+      setError('No hay contactos válidos para importar.');
+      return;
+    }
+
+    // Verificar límite de contactos del plan del tenant
+    try {
+      const tenant = await tenantService.getTenant(user.tenantId);
+      if (tenant?.limits?.maxContacts) {
+        const projected = contacts.length + validContacts.length;
+        if (projected > tenant.limits.maxContacts) {
+          setError(`Límite del plan excedido: tu plan permite ${tenant.limits.maxContacts} contactos y con esta importación tendrías ${projected}.`);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('No se pudo verificar el límite del plan:', err);
+    }
+
+    setIsImporting(true);
+    setImportProgress(0);
+    let successCount = 0;
+    let failedCount = 0;
+
+    try {
+      const chunkSize = 10;
+      for (let i = 0; i < validContacts.length; i += chunkSize) {
+        const chunk = validContacts.slice(i, i + chunkSize);
+        const results = await Promise.allSettled(
+          chunk.map(contact =>
+            crmService.createContact(user.tenantId, {
+              firstName: contact.firstName || 'Sin nombre',
+              lastName: contact.lastName,
+              email: contact.email || undefined,
+              phone: contact.phone || undefined,
+              companyName: contact.companyName || undefined,
+              type: contact.type,
+              ownerId: user.uid,
+              tags: ['importado'],
+              consent: true,
+              status: 'NUEVO' as Contact['status'],
+            })
+          )
+        );
+        results.forEach(r => (r.status === 'fulfilled' ? successCount++ : failedCount++));
+        setImportProgress(Math.min(i + chunkSize, validContacts.length));
+      }
+
+      alert(`✅ Importación completada.\nExitosos: ${successCount}\nFallidos: ${failedCount}`);
+      setIsImportModalOpen(false);
+      setParsedContacts([]);
+      await loadData();
+    } catch (err) {
+      setError('Error durante la importación.');
+      console.error(err);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // ===== LÓGICA DE SELECCIÓN Y CAMPAÑAS =====
   const toggleSelectAll = () => {
     if (selectedContactIds.size === contacts.length) {
       setSelectedContactIds(new Set());
@@ -149,13 +246,12 @@ export default function ContactsPage() {
     setSelectedContactIds(newSet);
   };
 
-    const openCampaignModal = () => {
+  const openCampaignModal = () => {
     if (selectedContactIds.size === 0) {
       setError('Por favor selecciona al menos un contacto.');
       return;
     }
-    
-    // VALIDACIÓN FRONTEND: Límite de 100 contactos
+
     if (selectedContactIds.size > 100) {
       setError('⚠️ Límite excedido: Tu plan actual permite un máximo de 100 contactos por envío. Por favor, reduce la selección.');
       return;
@@ -184,12 +280,11 @@ export default function ContactsPage() {
 
       const selectedContacts = contacts.filter(c => selectedContactIds.has(c.id) && c.email);
 
-      // Aquí usamos el campo de texto 'companyName' directamente para la variable {{empresa}}
       const recipients = selectedContacts.map(contact => ({
         to: contact.email!,
         variables: {
           nombre: contact.firstName || 'Cliente',
-          empresa: contact.companyName || 'Tu Empresa', // Usa el texto que escribiste
+          empresa: contact.companyName || 'Tu Empresa',
           email: contact.email || '',
         }
       }));
@@ -230,24 +325,32 @@ export default function ContactsPage() {
     );
   }
 
+  const validCount = parsedContacts.filter(c => c.isValid).length;
+  const invalidCount = parsedContacts.length - validCount;
+
   return (
     <main style={{ minHeight: '100vh', backgroundColor: '#f9fafb', padding: '32px' }}>
       <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-        
+
         <div style={{ marginBottom: '32px' }}>
           <nav style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: '#6b7280' }}>
             <Link href="/dashboard" style={{ color: '#2563eb', textDecoration: 'none' }}>Dashboard</Link>
             <span>/</span>
             <span style={{ fontWeight: '500', color: '#111827' }}>Contactos</span>
           </nav>
-          
+
           <h1 style={{ marginBottom: '8px', fontSize: '30px', fontWeight: 'bold', color: '#111827' }}>Gestión de Contactos</h1>
           <p style={{ marginBottom: '16px', fontSize: '16px', color: '#6b7280' }}>Administra tus leads, prospectos y clientes.</p>
-          
-          <div style={{ display: 'flex', gap: '12px' }}>
+
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button type="button" onClick={openCreateModal} style={{ backgroundColor: '#2563eb', color: 'white', padding: '12px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
               Nuevo Contacto
+            </button>
+
+            <button type="button" onClick={openImportModal} style={{ backgroundColor: '#7c3aed', color: 'white', padding: '12px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+              Importar Excel
             </button>
 
             <button type="button" onClick={openCampaignModal} disabled={selectedContactIds.size === 0} style={{ backgroundColor: selectedContactIds.size > 0 ? '#10b981' : '#9ca3af', color: 'white', padding: '12px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
@@ -326,18 +429,10 @@ export default function ContactsPage() {
                     <input type="text" name="lastName" required value={formData.lastName} onChange={handleInputChange} style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} />
                   </div>
                 </div>
-                
-                {/* CAMPO DE TEXTO SIMPLE PARA EL NOMBRE DE LA EMPRESA */}
+
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Nombre de la Empresa (para variable &#123;&#123;empresa&#125;&#125;)</label>
-                  <input 
-                    type="text" 
-                    name="companyName" 
-                    value={formData.companyName} 
-                    onChange={handleInputChange} 
-                    placeholder="Ej: Acme Corp" 
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} 
-                  />
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Nombre de la Empresa</label>
+                  <input type="text" name="companyName" value={formData.companyName} onChange={handleInputChange} placeholder="Ej: Acme Corp" style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} />
                 </div>
 
                 <div style={{ marginBottom: '16px' }}>
@@ -367,6 +462,100 @@ export default function ContactsPage() {
           </div>
         )}
 
+        {/* MODAL: IMPORTAR EXCEL */}
+        {isImportModalOpen && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
+            <div style={{ width: '100%', maxWidth: '640px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+              <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>Importar Contactos desde Excel</h2>
+                <button onClick={() => setIsImportModalOpen(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
+              </div>
+
+              <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f5f3ff', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
+                <p style={{ fontSize: '14px', color: '#5b21b6', margin: 0 }}>
+                  El archivo debe tener columnas como: Nombre, Apellido, Email, Teléfono, Empresa, Tipo.
+                </p>
+                <button type="button" onClick={() => importService.downloadTemplate()} style={{ marginTop: '8px', padding: '6px 12px', backgroundColor: '#7c3aed', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                  Descargar Plantilla de Ejemplo
+                </button>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Selecciona el archivo (.xlsx, .xls, .csv)</label>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFileChange}
+                  disabled={isParsing || isImporting}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }}
+                />
+              </div>
+
+              {isParsing && <p style={{ fontSize: '14px', color: '#6b7280' }}>Leyendo archivo...</p>}
+
+              {parsedContacts.length > 0 && (
+                <div>
+                  <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#166534' }}>✅ Válidos: {validCount}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#991b1b' }}>❌ Inválidos: {invalidCount}</span>
+                  </div>
+
+                  <div style={{ overflowX: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px', marginBottom: '16px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead style={{ backgroundColor: '#f9fafb' }}>
+                        <tr>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Fila</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Nombre</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Email</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Empresa</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedContacts.slice(0, 8).map((c) => (
+                          <tr key={c.rowNumber} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                            <td style={{ padding: '8px 12px', color: '#6b7280' }}>{c.rowNumber}</td>
+                            <td style={{ padding: '8px 12px' }}>{c.firstName} {c.lastName}</td>
+                            <td style={{ padding: '8px 12px' }}>{c.email || '-'}</td>
+                            <td style={{ padding: '8px 12px' }}>{c.companyName || '-'}</td>
+                            <td style={{ padding: '8px 12px', color: c.isValid ? '#166534' : '#991b1b' }}>
+                              {c.isValid ? 'Válido' : c.error}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {parsedContacts.length > 8 && (
+                      <p style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7280', margin: 0 }}>... y {parsedContacts.length - 8} filas más.</p>
+                    )}
+                  </div>
+
+                  {isImporting && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ height: '8px', backgroundColor: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${(importProgress / validCount) * 100}%`, backgroundColor: '#7c3aed', transition: 'width 0.3s' }}></div>
+                      </div>
+                      <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Importando {importProgress} de {validCount}...</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
+                <button type="button" onClick={() => setIsImportModalOpen(false)} style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}>Cancelar</button>
+                <button
+                  type="button"
+                  onClick={handleImportConfirm}
+                  disabled={isImporting || validCount === 0}
+                  style={{ padding: '8px 16px', backgroundColor: isImporting || validCount === 0 ? '#9ca3af' : '#7c3aed', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isImporting || validCount === 0 ? 'not-allowed' : 'pointer' }}
+                >
+                  {isImporting ? 'Importando...' : `Importar ${validCount} Contactos`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* MODAL: ENVIAR CAMPAÑA */}
         {isCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
@@ -375,7 +564,7 @@ export default function ContactsPage() {
                 <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>Enviar Campaña Masiva</h2>
                 <button onClick={() => setIsCampaignModalOpen(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
               </div>
-              
+
               <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px', border: '1px solid #bae6fd' }}>
                 <p style={{ fontSize: '14px', color: '#0369a1', margin: 0 }}>
                   Vas a enviar un correo a <strong>{selectedContactIds.size} contacto(s)</strong> seleccionado(s).
