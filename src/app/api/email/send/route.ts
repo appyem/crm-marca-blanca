@@ -1,7 +1,7 @@
 // src/app/api/email/send/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
-import { renderTemplate, emailService } from '@/services/email.service';
+import { renderTemplate } from '@/services/email.service';
 import { emailServiceServer } from '@/services/email.service.server';
 import { getFirebaseAdmin } from '@/lib/firebase/admin';
 
@@ -44,8 +44,8 @@ export async function POST(request: NextRequest) {
     const finalSubject = renderTemplate(subject, variables || {});
     const finalBody = renderTemplate(bodyText, variables || {});
 
-    // 4. Registrar en Firestore
-    await emailServiceServer.logEmail(tenantId, {
+    // 4. Registrar en Firestore (devuelve la referencia)
+    const logRef = await emailServiceServer.logEmail(tenantId, {
       templateId: templateId || undefined,
       to,
       subject: finalSubject,
@@ -53,15 +53,14 @@ export async function POST(request: NextRequest) {
       status: 'PENDING',
     });
 
-    // 5. OBTENER EL NOMBRE DEL TENANT DINÁMICAMENTE
+    // 5. Obtener el nombre del tenant dinámicamente
     const tenantDoc = await db.collection('tenants').doc(tenantId).get();
     const tenantData = tenantDoc.data();
-    // Usamos 'name' o 'companyName' del tenant, con fallback a 'CRM App'
     const senderName = tenantData?.name || tenantData?.companyName || 'CRM App';
     const fromEmail = process.env.FROM_EMAIL || 'onboarding@resend.dev';
     const finalFrom = `${senderName} <${fromEmail}>`;
 
-    // 6. Enviar con Resend usando el nombre dinámico
+    // 6. Enviar con Resend
     const { data, error } = await resend.emails.send({
       from: finalFrom,
       to: [to],
@@ -71,7 +70,22 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('Error específico de Resend:', error);
+      await logRef.update({
+        status: 'FAILED',
+        errorMessage: error.message,
+        updatedAt: new Date().toISOString(),
+      });
       return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
+
+    // 7. Guardar el resendId en el log para que el webhook pueda rastrearlo
+    if (data?.id) {
+      await logRef.update({
+        resendId: data.id,
+        status: 'SENT',
+        sentAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     return NextResponse.json({ success: true, messageId: data?.id });

@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const body: BatchPayload = await request.json();
     const { templateId, subject, bodyText, recipients } = body;
 
-    // 3. VALIDACIÓN CRÍTICA DE LÍMITE (Máximo 100 por Resend)
+    // 3. Validaciones
     if (!recipients || recipients.length === 0) {
       return NextResponse.json({ error: 'No hay destinatarios.' }, { status: 400 });
     }
@@ -57,7 +57,6 @@ export async function POST(request: NextRequest) {
         error: 'Límite excedido: Tu plan actual permite un máximo de 100 correos por envío.' 
       }, { status: 400 });
     }
-
     if (!subject || !bodyText) {
       return NextResponse.json({ error: 'Faltan datos de la plantilla.' }, { status: 400 });
     }
@@ -77,8 +76,8 @@ export async function POST(request: NextRequest) {
         const finalSubject = renderTemplate(subject, recipient.variables || {});
         const finalBody = renderTemplate(bodyText, recipient.variables || {});
 
-        // Registrar en Firestore
-        await emailServiceServer.logEmail(tenantId, {
+        // Registrar en Firestore (devuelve la referencia)
+        const logRef = await emailServiceServer.logEmail(tenantId, {
           templateId,
           to: recipient.to,
           subject: finalSubject,
@@ -87,7 +86,7 @@ export async function POST(request: NextRequest) {
         });
 
         // Enviar con Resend
-        const { error } = await resend.emails.send({
+        const { data, error } = await resend.emails.send({
           from: finalFrom,
           to: [recipient.to],
           subject: finalSubject,
@@ -97,8 +96,21 @@ export async function POST(request: NextRequest) {
         if (error) {
           results.failed++;
           results.errors.push(`Error al enviar a ${recipient.to}: ${error.message}`);
+          await logRef.update({
+            status: 'FAILED',
+            errorMessage: error.message,
+            updatedAt: new Date().toISOString(),
+          });
         } else {
           results.success++;
+          if (data?.id) {
+            await logRef.update({
+              resendId: data.id,
+              status: 'SENT',
+              sentAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
+          }
         }
       } catch (err) {
         results.failed++;
