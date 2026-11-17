@@ -14,7 +14,6 @@ export interface ParsedContact {
   error?: string;
 }
 
-// Alias de encabezados aceptados (sin importar mayúsculas ni tildes)
 const HEADER_ALIASES: Record<string, string[]> = {
   firstName: ['nombre', 'nombres', 'name', 'first name', 'firstname'],
   lastName: ['apellido', 'apellidos', 'last name', 'lastname', 'surname'],
@@ -32,15 +31,53 @@ function normalizeHeader(header: string): string {
     .trim();
 }
 
-function isValidEmail(email: string): boolean {
+/**
+ * Sanitiza un email:
+ * - Remueve espacios, saltos de línea, tabs
+ * - Remueve el prefijo "mailto:" si existe
+ * - Si hay múltiples emails separados, toma solo el primero
+ * - Valida formato
+ */
+function sanitizeEmail(raw: string): { email: string; valid: boolean; error?: string } {
+  if (!raw) return { email: '', valid: false };
+
+  // Limpiar: quitar saltos de línea, tabs, espacios no-breaking (U+00A0)
+  let cleaned = raw
+    .replace(/[\r\n\t\u00A0]/g, ' ')  // saltos de línea y espacios raros → espacio
+    .replace(/\s+/g, ' ')              // múltiples espacios → uno
+    .trim();
+
+  // Si contiene varios emails (separados por espacio, coma, punto y coma), tomar el primero
+  const separators = /[\s,;]+/;
+  if (separators.test(cleaned)) {
+    const parts = cleaned.split(separators).filter(p => p.length > 0);
+    cleaned = parts[0] || '';
+  }
+
+  // Remover prefijo "mailto:" si existe
+  if (cleaned.toLowerCase().startsWith('mailto:')) {
+    cleaned = cleaned.substring(7).trim();
+  }
+
+  // Validar formato
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return re.test(email);
+  if (!re.test(cleaned)) {
+    return { email: cleaned, valid: false, error: 'Correo con formato inválido.' };
+  }
+
+  return { email: cleaned, valid: true };
+}
+
+function sanitizeString(raw: unknown): string {
+  if (raw === null || raw === undefined) return '';
+  const str = typeof raw === 'string' ? raw : String(raw);
+  return str
+    .replace(/[\u00A0\r\n\t]/g, ' ')  // espacios raros → espacio normal
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export const importService = {
-  /**
-   * Lee un archivo Excel/CSV y lo convierte en una lista de contactos validados.
-   */
   async parseExcelFile(file: File): Promise<ParsedContact[]> {
     const arrayBuffer = await file.arrayBuffer();
     const workbook = XLSX.read(arrayBuffer, { type: 'array' });
@@ -53,7 +90,6 @@ export const importService = {
       return [];
     }
 
-    // Mapear encabezados del archivo a nuestros campos
     const originalHeaders = Object.keys(rawRows[0]);
     const headerMap: Record<string, string> = {};
 
@@ -72,12 +108,12 @@ export const importService = {
       const getValue = (field: string): string => {
         const originalHeader = headerMap[field];
         if (!originalHeader) return '';
-        const value = row[originalHeader];
-        return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+        return sanitizeString(row[originalHeader]);
       };
 
-      const email = getValue('email');
       const firstName = getValue('firstName');
+      const rawEmail = getValue('email');
+      const { email, valid: emailValid, error: emailError } = sanitizeEmail(rawEmail);
 
       let isValid = true;
       let error: string | undefined;
@@ -85,9 +121,9 @@ export const importService = {
       if (!firstName && !email) {
         isValid = false;
         error = 'Falta nombre y correo electrónico.';
-      } else if (email && !isValidEmail(email)) {
+      } else if (rawEmail && !emailValid) {
         isValid = false;
-        error = 'Correo con formato inválido.';
+        error = emailError || 'Correo con formato inválido.';
       }
 
       const rawType = getValue('type').toUpperCase();
@@ -101,7 +137,7 @@ export const importService = {
         phone: getValue('phone'),
         companyName: getValue('companyName'),
         type,
-        rowNumber: index + 2, // +2 porque Excel empieza en fila 1 y tiene encabezados
+        rowNumber: index + 2,
         isValid,
         error,
       });
@@ -110,9 +146,6 @@ export const importService = {
     return results;
   },
 
-  /**
-   * Descarga una plantilla de Excel lista para llenar.
-   */
   downloadTemplate(): void {
     const template = [
       {

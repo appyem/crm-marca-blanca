@@ -3,26 +3,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Webhook } from 'svix';
 import { getFirebaseAdmin } from '@/lib/firebase/admin';
 
-interface ResendWebhookEvent {
-  type: string;
-  data: {
-    email_id: string;
-    from: string;
-    to: string[];
-    subject: string;
-    created_at: string;
-    click?: {
-      link: string;
-      user_agent?: string;
-      ip_address?: string;
-    };
-    open?: {
-      user_agent?: string;
-      ip_address?: string;
-    };
-    bounce?: {
-      reason?: string;
-    };
+interface ResendEventData {
+  email_id?: string;
+  from?: string;
+  to?: string[];
+  subject?: string;
+  created_at?: string;
+  click?: {
+    link?: string;
+    user_agent?: string;
+    ip_address?: string;
+  };
+  open?: {
+    user_agent?: string;
+    ip_address?: string;
+  };
+  bounce?: {
+    reason?: string;
   };
 }
 
@@ -31,34 +28,47 @@ export async function POST(request: NextRequest) {
     const payload = await request.text();
     const headers = Object.fromEntries(request.headers.entries());
 
-    // 1. Validar firma del webhook
     const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
     if (!webhookSecret) {
-      console.error('RESEND_WEBHOOK_SECRET no está configurado');
-      return NextResponse.json({ error: 'Configuración del servidor incompleta' }, { status: 500 });
+      console.error('[Webhook] RESEND_WEBHOOK_SECRET no configurado');
+      return NextResponse.json({ error: 'Configuración incompleta' }, { status: 500 });
     }
 
-    const wh = new Webhook(webhookSecret);
-    let event: ResendWebhookEvent;
-
+    // 1. Verificar firma
+    let parsedEvent: unknown;
     try {
-      // ARREGLO: cast a unknown primero, luego al tipo específico
-      event = wh.verify(payload, headers as Record<string, string>) as unknown as ResendWebhookEvent;
+      const wh = new Webhook(webhookSecret);
+      parsedEvent = wh.verify(payload, headers as Record<string, string>);
     } catch (err) {
-      console.error('Firma de webhook inválida:', err);
+      console.error('[Webhook] Firma inválida:', err);
       return NextResponse.json({ error: 'Firma inválida' }, { status: 400 });
     }
 
-    // 2. Procesar el evento
-    const { db } = getFirebaseAdmin();
-    const { type, data } = event;
-    const resendEmailId = data.email_id;
-
-    if (!resendEmailId) {
-      return NextResponse.json({ error: 'Falta email_id' }, { status: 400 });
+    // 2. Validar estructura (manejo defensivo)
+    if (!parsedEvent || typeof parsedEvent !== 'object') {
+      console.error('[Webhook] Evento vacío o malformado:', parsedEvent);
+      return NextResponse.json({ error: 'Evento malformado' }, { status: 400 });
     }
 
+    const event = parsedEvent as { type?: string; data?: ResendEventData };
+    const type = event.type;
+    const data = event.data;
+
+    if (!type || !data) {
+      console.error('[Webhook] Falta type o data en el evento:', event);
+      return NextResponse.json({ error: 'Evento sin type o data' }, { status: 400 });
+    }
+
+    const resendEmailId = data.email_id;
+    if (!resendEmailId) {
+      console.log(`[Webhook] Evento ${type} sin email_id (puede ser un evento de dominio)`);
+      return NextResponse.json({ success: true, ignored: true });
+    }
+
+    console.log(`[Webhook] Procesando: ${type} para ${resendEmailId}`);
+
     // 3. Buscar el emailLog por resendId en todos los tenants
+    const { db } = getFirebaseAdmin();
     const allTenants = await db.collection('tenants').get();
     let targetLogRef: FirebaseFirestore.DocumentReference | null = null;
     let targetTenantId: string | null = null;
@@ -80,7 +90,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!targetLogRef || !targetTenantId) {
-      console.log(`Webhook recibido para email desconocido: ${resendEmailId}`);
+      console.log(`[Webhook] Email desconocido: ${resendEmailId}`);
       return NextResponse.json({ success: true, ignored: true });
     }
 
@@ -164,7 +174,7 @@ export async function POST(request: NextRequest) {
         break;
 
       default:
-        console.log(`Evento no manejado: ${type}`);
+        console.log(`[Webhook] Evento no manejado: ${type}`);
     }
 
     // 5. Aplicar actualización
@@ -176,7 +186,8 @@ export async function POST(request: NextRequest) {
 
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
-    console.error('Error procesando webhook de Resend:', errorMessage);
+    console.error('[Webhook] Error general:', errorMessage);
+    // Devolver 200 para que Resend no reintente infinitamente
     return NextResponse.json({ error: errorMessage }, { status: 200 });
   }
 }
