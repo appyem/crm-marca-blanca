@@ -78,14 +78,15 @@ export const emailService = {
   // ==========================================
 
   async logEmail(
-    tenantId: string,
-    logData: CreateLogData
-  ): Promise<string> {
+  tenantId: string,
+  logData: Omit<EmailLog, 'id' | 'tenantId' | 'createdAt'> & { resendId?: string }
+): Promise<string> {
     const logsRef = collection(db, 'tenants', tenantId, 'emailLogs');
     const now = new Date().toISOString();
 
     const newLog = {
       ...logData,
+      resendId: logData.resendId || null,
       tenantId,
       createdAt: now,
     };
