@@ -58,3 +58,32 @@ export interface EmailEventLog {
     link?: string;
   };
 }
+
+// ==========================================
+// NUEVOS TIPOS PARA ANALÍTICAS (FASE 7.5)
+// ==========================================
+
+export interface EmailStats {
+  totalSent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  failed: number;
+  deliveryRate: number;      // Porcentaje 0-100
+  openRate: number;          // Porcentaje 0-100
+  clickRate: number;         // Porcentaje 0-100
+  bounceRate: number;        // Porcentaje 0-100
+}
+
+export interface EmailStatsQuery {
+  startDate: string;  // ISO timestamp
+  endDate: string;    // ISO timestamp
+  status?: EmailStatus;
+  templateId?: string;
+}
+
+export interface EmailLogWithEvents extends EmailLog {
+  events: EmailEventLog[];
+  template?: EmailTemplate;
+}
