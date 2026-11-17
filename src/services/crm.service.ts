@@ -14,13 +14,11 @@ import {
 import { db } from '@/lib/firebase/client';
 import { Contact, Company, Opportunity } from '@/types/crm.types';
 
-// Tipos auxiliares
 type FirestoreDocData<T> = Omit<T, 'id'>;
 type CreateContactData = Omit<Contact, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>;
 type CreateCompanyData = Omit<Company, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>;
 type CreateOpportunityData = Omit<Opportunity, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>;
 
-// Función auxiliar estricta para convertir Timestamps
 const convertTimestamps = <T extends Record<string, unknown>>(data: T): T => {
   const result = { ...data };
   for (const key in result) {
@@ -30,6 +28,23 @@ const convertTimestamps = <T extends Record<string, unknown>>(data: T): T => {
   }
   return result;
 };
+
+// Helper de verificación de propiedad
+async function verifyOwnership(
+  collectionName: 'contacts' | 'companies' | 'opportunities',
+  tenantId: string,
+  docId: string
+): Promise<void> {
+  const ref = doc(db, 'tenants', tenantId, collectionName, docId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error(`${collectionName} no encontrado`);
+  }
+  const data = snap.data();
+  if (data.tenantId !== tenantId) {
+    throw new Error('Acceso denegado: el documento no pertenece a este tenant');
+  }
+}
 
 export const crmService = {
   // ==========================================
@@ -46,17 +61,17 @@ export const crmService = {
     const contactsRef = collection(db, 'tenants', tenantId, 'contacts');
     const q = query(contactsRef, orderBy('createdAt', 'desc'));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...convertTimestamps(doc.data() as FirestoreDocData<Contact>) } as Contact));
+    return snapshot.docs.map(d => ({ id: d.id, ...convertTimestamps(d.data() as FirestoreDocData<Contact>) } as Contact));
   },
 
   async updateContact(tenantId: string, contactId: string, updates: Partial<Omit<Contact, 'id' | 'tenantId' | 'createdAt'>>): Promise<void> {
+    await verifyOwnership('contacts', tenantId, contactId);
     const contactRef = doc(db, 'tenants', tenantId, 'contacts', contactId);
-    const contactDoc = await getDoc(contactRef);
-    if (!contactDoc.exists() || contactDoc.data().tenantId !== tenantId) throw new Error('Contacto no encontrado');
     await updateDoc(contactRef, { ...updates, updatedAt: new Date().toISOString() });
   },
 
   async deleteContact(tenantId: string, contactId: string): Promise<void> {
+    await verifyOwnership('contacts', tenantId, contactId);
     await deleteDoc(doc(db, 'tenants', tenantId, 'contacts', contactId));
   },
 
@@ -74,10 +89,11 @@ export const crmService = {
     const companiesRef = collection(db, 'tenants', tenantId, 'companies');
     const q = query(companiesRef, orderBy('createdAt', 'desc'));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...convertTimestamps(doc.data() as FirestoreDocData<Company>) } as Company));
+    return snapshot.docs.map(d => ({ id: d.id, ...convertTimestamps(d.data() as FirestoreDocData<Company>) } as Company));
   },
 
   async deleteCompany(tenantId: string, companyId: string): Promise<void> {
+    await verifyOwnership('companies', tenantId, companyId);
     await deleteDoc(doc(db, 'tenants', tenantId, 'companies', companyId));
   },
 
@@ -95,15 +111,17 @@ export const crmService = {
     const oppRef = collection(db, 'tenants', tenantId, 'opportunities');
     const q = query(oppRef, orderBy('createdAt', 'desc'));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...convertTimestamps(doc.data() as FirestoreDocData<Opportunity>) } as Opportunity));
+    return snapshot.docs.map(d => ({ id: d.id, ...convertTimestamps(d.data() as FirestoreDocData<Opportunity>) } as Opportunity));
   },
 
   async updateOpportunityStage(tenantId: string, opportunityId: string, stageId: string, status: Opportunity['status']): Promise<void> {
+    await verifyOwnership('opportunities', tenantId, opportunityId);
     const oppRef = doc(db, 'tenants', tenantId, 'opportunities', opportunityId);
     await updateDoc(oppRef, { stageId, status, updatedAt: new Date().toISOString() });
   },
 
   async deleteOpportunity(tenantId: string, opportunityId: string): Promise<void> {
+    await verifyOwnership('opportunities', tenantId, opportunityId);
     await deleteDoc(doc(db, 'tenants', tenantId, 'opportunities', opportunityId));
   },
 };

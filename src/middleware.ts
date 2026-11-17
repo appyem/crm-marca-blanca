@@ -2,51 +2,45 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// Rutas que requieren autenticación
-const protectedRoutes = ['/dashboard'];
+// Rutas públicas permitidas (sin autenticación)
+const publicPaths = ['/', '/login', '/register'];
 
-// Rutas públicas (login, register, etc.)
-const publicRoutes = ['/login', '/register'];
+// Prefijos que NO deben protegerse
+const publicPrefixes = ['/api/', '/_next/', '/favicon.ico'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Verificar si la ruta está protegida
-  const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
+  // 1. Dejar pasar rutas públicas exactas
+  if (publicPaths.includes(pathname)) {
+    return NextResponse.next();
+  }
 
-  // Verificar si la ruta es pública
-  const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route));
+  // 2. Dejar pasar rutas con prefijos públicos (API, assets)
+  if (publicPrefixes.some(prefix => pathname.startsWith(prefix))) {
+    return NextResponse.next();
+  }
 
-  // Obtener el token de sesión de Firebase (almacenado en cookies)
+  // 3. Verificar cookie de sesión
   const sessionCookie = request.cookies.get('__session');
 
-  // Si es una ruta protegida y no hay sesión, redirigir al login
-  if (isProtectedRoute && !sessionCookie) {
+  // 4. Si no hay sesión, redirigir al login
+  if (!sessionCookie) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // Si es una ruta pública y ya hay sesión, redirigir al dashboard
-  if (isPublicRoute && sessionCookie) {
-    const dashboardUrl = new URL('/dashboard', request.url);
-    return NextResponse.redirect(dashboardUrl);
+  // 5. Si hay sesión y estamos en /login o /register, ir al dashboard
+  if (pathname === '/login' || pathname === '/register') {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
-  // Continuar con la petición normal
   return NextResponse.next();
 }
 
-// Configurar qué rutas debe interceptar el middleware
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 };
