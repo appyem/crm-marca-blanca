@@ -1,12 +1,24 @@
 // src/app/(dashboard)/email/page.tsx
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/firebase/client';
 import { emailService, renderTemplate } from '@/services/email.service';
 import { EmailTemplate } from '@/types/email.types';
+
+// ==========================================
+// VARIABLES DISPONIBLES (sincronizadas con el Excel de contactos)
+// ==========================================
+const CONTACT_FIELDS = [
+  { key: 'firstName', label: 'Nombre', icon: '👤', example: 'Juan' },
+  { key: 'lastName', label: 'Apellido', icon: '👤', example: 'Pérez' },
+  { key: 'email', label: 'Email', icon: '📧', example: 'juan@empresa.com' },
+  { key: 'phone', label: 'Teléfono', icon: '📞', example: '3001234567' },
+  { key: 'companyName', label: 'Empresa', icon: '🏢', example: 'Acme Corp' },
+  { key: 'type', label: 'Tipo', icon: '🏷️', example: 'LEAD' },
+];
 
 export default function EmailTemplatesPage() {
   const { user, loading: authLoading } = useAuth();
@@ -21,10 +33,12 @@ export default function EmailTemplatesPage() {
     name: '',
     subject: '',
     body: '',
-    variables: '', 
   });
 
-  const [previewData, setPreviewData] = useState<Record<string, string>>({});
+  // Refs para los campos de texto (para insertar variables en la posición del cursor)
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const [activeField, setActiveField] = useState<'subject' | 'body'>('subject');
 
   // Estado para el modal de prueba de envío
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
@@ -55,16 +69,66 @@ export default function EmailTemplatesPage() {
     }
   }, [initialized, authLoading, user, loadData]);
 
+  // ==========================================
+  // INSERCIÓN AUTOMÁTICA DE VARIABLES
+  // ==========================================
+  const insertVariable = (variableKey: string) => {
+    const variableText = `{{${variableKey}}}`;
+    const ref = activeField === 'subject' ? subjectRef.current : bodyRef.current;
+    
+    if (!ref) {
+      // Si no hay ref, insertar al final
+      setFormData(prev => ({
+        ...prev,
+        [activeField]: prev[activeField] + variableText,
+      }));
+      return;
+    }
+
+    const start = ref.selectionStart || 0;
+    const end = ref.selectionEnd || 0;
+    const currentValue = activeField === 'subject' ? formData.subject : formData.body;
+    
+    const newValue = 
+      currentValue.substring(0, start) + 
+      variableText + 
+      currentValue.substring(end);
+    
+    setFormData(prev => ({
+      ...prev,
+      [activeField]: newValue,
+    }));
+
+    // Restaurar el cursor después de la variable insertada
+    setTimeout(() => {
+      const newPos = start + variableText.length;
+      ref.focus();
+      ref.setSelectionRange(newPos, newPos);
+    }, 0);
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  // ==========================================
+  // EXTRACCIÓN AUTOMÁTICA DE VARIABLES DEL CONTENIDO
+  // ==========================================
+  const extractVariables = (text: string): string[] => {
+    const matches = text.match(/\{\{(\w+)\}\}/g);
+    if (!matches) return [];
     
-    if (name === 'body' || name === 'variables') {
-      const vars = formData.variables.split(',').map(v => v.trim()).filter(v => v);
-      const sampleData: Record<string, string> = {};
-      vars.forEach(v => { sampleData[v] = `[${v}]`; });
-      setPreviewData(sampleData);
-    }
+    const uniqueVars = new Set<string>();
+    matches.forEach(match => {
+      const varName = match.replace(/\{\{|\}\}/g, '');
+      // Solo incluir variables que existen en CONTACT_FIELDS
+      if (CONTACT_FIELDS.some(f => f.key === varName)) {
+        uniqueVars.add(varName);
+      }
+    });
+    
+    return Array.from(uniqueVars);
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -75,10 +139,11 @@ export default function EmailTemplatesPage() {
     setError(null);
 
     try {
-      const variablesArray = formData.variables
-        .split(',')
-        .map(v => v.trim())
-        .filter(v => v.length > 0);
+      // Extraer variables automáticamente del asunto y cuerpo
+      const allVariables = new Set<string>();
+      extractVariables(formData.subject).forEach(v => allVariables.add(v));
+      extractVariables(formData.body).forEach(v => allVariables.add(v));
+      const variablesArray = Array.from(allVariables);
 
       await emailService.createTemplate(user.tenantId, {
         name: formData.name,
@@ -88,10 +153,10 @@ export default function EmailTemplatesPage() {
         isActive: true,
       });
 
-      setFormData({ name: '', subject: '', body: '', variables: '' });
-      setPreviewData({});
+      setFormData({ name: '', subject: '', body: '' });
       setIsModalOpen(false);
       await loadData();
+      alert('✅ Plantilla creada exitosamente');
     } catch (err) {
       setError('Error al crear la plantilla.');
       console.error(err);
@@ -102,8 +167,12 @@ export default function EmailTemplatesPage() {
 
   const openTestModal = (template: EmailTemplate) => {
     setSelectedTemplate(template);
+    // Pre-llenar con los valores de ejemplo de CONTACT_FIELDS
     const initialVars: Record<string, string> = {};
-    template.variables.forEach(v => { initialVars[v] = ''; });
+    template.variables.forEach(v => {
+      const field = CONTACT_FIELDS.find(f => f.key === v);
+      initialVars[v] = field ? field.example : '';
+    });
     setTestVariables(initialVars);
     setTestEmail(user?.email || '');
     setIsTestModalOpen(true);
@@ -113,7 +182,7 @@ export default function EmailTemplatesPage() {
     setTestVariables(prev => ({ ...prev, [key]: value }));
   };
 
-    const handleSendTest = async (e: React.FormEvent) => {
+  const handleSendTest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTemplate || !user) return;
 
@@ -139,14 +208,12 @@ export default function EmailTemplatesPage() {
         }),
       });
 
-      // Intentar leer el error como texto primero por si no es JSON válido
       const textResponse = await response.text();
       
       let result;
       try {
         result = JSON.parse(textResponse);
       } catch {
-        // Si no es JSON, es un error de Next.js o HTML
         throw new Error(`El servidor devolvió un error inesperado (Status: ${response.status}). Revisa la terminal de npm run dev.`);
       }
 
@@ -154,7 +221,7 @@ export default function EmailTemplatesPage() {
         throw new Error(result.error || `Error del servidor (${response.status})`);
       }
 
-      alert('✅ ¡Correo de prueba enviado exitosamente! Revisa tu bandeja de entrada (y la carpeta de Spam).');
+      alert('✅ ¡Correo de prueba enviado exitosamente! Revisa tu bandeja de entrada.');
       setIsTestModalOpen(false);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Error desconocido al enviar.';
@@ -163,6 +230,15 @@ export default function EmailTemplatesPage() {
     } finally {
       setIsSendingTest(false);
     }
+  };
+
+  // Generar datos de ejemplo para el preview
+  const getPreviewData = (): Record<string, string> => {
+    const data: Record<string, string> = {};
+    CONTACT_FIELDS.forEach(f => {
+      data[f.key] = f.example;
+    });
+    return data;
   };
 
   if (authLoading || isFetching) {
@@ -224,11 +300,18 @@ export default function EmailTemplatesPage() {
                       <td style={{ padding: '16px 24px', fontSize: '14px', fontWeight: '500', color: '#111827' }}>{template.name}</td>
                       <td style={{ padding: '16px 24px', fontSize: '14px', color: '#6b7280' }}>{template.subject}</td>
                       <td style={{ padding: '16px 24px', fontSize: '14px', color: '#6b7280' }}>
-                        {template.variables.map(v => (
-                          <span key={v} style={{ display: 'inline-block', padding: '2px 8px', backgroundColor: '#e0e7ff', color: '#3730a3', borderRadius: '4px', fontSize: '12px', marginRight: '4px', marginBottom: '4px' }}>
-                            {`{{${v}}}`}
-                          </span>
-                        ))}
+                        {template.variables.length === 0 ? (
+                          <span style={{ color: '#9ca3af', fontSize: '12px' }}>Sin variables</span>
+                        ) : (
+                          template.variables.map(v => {
+                            const field = CONTACT_FIELDS.find(f => f.key === v);
+                            return (
+                              <span key={v} style={{ display: 'inline-block', padding: '2px 8px', backgroundColor: '#e0e7ff', color: '#3730a3', borderRadius: '4px', fontSize: '12px', marginRight: '4px', marginBottom: '4px' }}>
+                                {field ? `${field.icon} ${field.label}` : `{{${v}}}`}
+                              </span>
+                            );
+                          })
+                        )}
                       </td>
                       <td style={{ padding: '16px 24px', fontSize: '14px' }}>
                         <button 
@@ -249,42 +332,176 @@ export default function EmailTemplatesPage() {
         {/* MODAL: CREAR PLANTILLA */}
         {isModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
-            <div style={{ width: '100%', maxWidth: '600px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ width: '100%', maxWidth: '700px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
                 <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>Nueva Plantilla</h2>
                 <button onClick={() => setIsModalOpen(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
               </div>
+
+              {/* PANEL DE VARIABLES DISPONIBLES */}
+              <div style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                <p style={{ fontSize: '13px', fontWeight: '600', color: '#0369a1', marginBottom: '8px' }}>
+                  📌 Variables Disponibles (haz clic para insertar)
+                </p>
+                <p style={{ fontSize: '12px', color: '#0c4a6e', marginBottom: '12px' }}>
+                  Posiciona el cursor en el campo donde quieres insertar la variable y haz clic en el botón:
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {CONTACT_FIELDS.map(field => (
+                    <button
+                      key={field.key}
+                      type="button"
+                      onClick={() => insertVariable(field.key)}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'white',
+                        color: '#1e40af',
+                        border: '1px solid #93c5fd',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: '500',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.backgroundColor = '#dbeafe';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }}
+                    >
+                      <span>{field.icon}</span>
+                      <span>{field.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: '11px', color: '#0369a1', marginTop: '8px', fontStyle: 'italic' }}>
+                  💡 Las variables se detectan automáticamente al guardar. No necesitas escribirlas manualmente.
+                </p>
+              </div>
+
               <form onSubmit={handleSubmit}>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Nombre de la Plantilla</label>
-                  <input type="text" name="name" required value={formData.name} onChange={handleInputChange} placeholder="Ej: Bienvenida Nuevo Cliente" style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} />
+                  <input 
+                    type="text" 
+                    name="name" 
+                    required 
+                    value={formData.name} 
+                    onChange={handleInputChange} 
+                    placeholder="Ej: Bienvenida Nuevo Cliente" 
+                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} 
+                  />
                 </div>
+
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Asunto del Correo</label>
-                  <input type="text" name="subject" required value={formData.subject} onChange={handleInputChange} placeholder="Ej: ¡Bienvenido a {{empresa}}!" style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} />
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
+                    Asunto del Correo
+                  </label>
+                  <input 
+                    ref={subjectRef}
+                    type="text" 
+                    name="subject" 
+                    required 
+                    value={formData.subject} 
+                    onChange={handleInputChange}
+                    onFocus={() => setActiveField('subject')}
+                    placeholder="Ej: ¡Bienvenido a nuestra empresa!" 
+                    style={{ 
+                      width: '100%', 
+                      padding: '8px 12px', 
+                      border: activeField === 'subject' ? '2px solid #2563eb' : '1px solid #d1d5db', 
+                      borderRadius: '6px', 
+                      fontSize: '14px', 
+                      backgroundColor: activeField === 'subject' ? '#eff6ff' : '#ffffff', 
+                      color: '#111827' 
+                    }} 
+                  />
+                  <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                    {activeField === 'subject' ? '✏️ Activo: haz clic en una variable arriba para insertarla aquí' : 'Haz clic aquí para activar este campo'}
+                  </p>
                 </div>
+
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Variables (separadas por coma)</label>
-                  <input type="text" name="variables" value={formData.variables} onChange={handleInputChange} placeholder="Ej: nombre, empresa, plan" style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} />
-                  <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Se usarán para reemplazar {'{{variable}}'} en el asunto y el cuerpo.</p>
-                </div>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Cuerpo del Correo (HTML o Texto)</label>
-                  <textarea name="body" required value={formData.body} onChange={handleInputChange} rows={6} placeholder="Ej: Hola {{nombre}}, gracias por unirte a {{empresa}}." style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827', fontFamily: 'monospace' }} />
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
+                    Cuerpo del Correo
+                  </label>
+                  <textarea 
+                    ref={bodyRef}
+                    name="body" 
+                    required 
+                    value={formData.body} 
+                    onChange={handleInputChange} 
+                    onFocus={() => setActiveField('body')}
+                    rows={8} 
+                    placeholder="Ej: Hola, gracias por unirte a nuestra empresa. Estamos felices de tenerte con nosotros." 
+                    style={{ 
+                      width: '100%', 
+                      padding: '8px 12px', 
+                      border: activeField === 'body' ? '2px solid #2563eb' : '1px solid #d1d5db', 
+                      borderRadius: '6px', 
+                      fontSize: '14px', 
+                      backgroundColor: activeField === 'body' ? '#eff6ff' : '#ffffff', 
+                      color: '#111827', 
+                      fontFamily: 'monospace',
+                      resize: 'vertical'
+                    }} 
+                  />
+                  <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                    {activeField === 'body' ? '✏️ Activo: haz clic en una variable arriba para insertarla aquí' : 'Haz clic aquí para activar este campo'}
+                  </p>
                 </div>
                 
-                {formData.body && (
+                {/* VISTA PREVIA */}
+                {(formData.subject || formData.body) && (
                   <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-                    <p style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '8px', textTransform: 'uppercase' }}>Vista Previa del Cuerpo</p>
-                    <p style={{ fontSize: '14px', color: '#111827', whiteSpace: 'pre-wrap' }}>
-                      {renderTemplate(formData.body, previewData)}
+                    <p style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '12px', textTransform: 'uppercase' }}>
+                      👁️ Vista Previa (con datos de ejemplo)
                     </p>
+                    {formData.subject && (
+                      <div style={{ marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: '#374151' }}>Asunto: </span>
+                        <span style={{ fontSize: '14px', color: '#111827', fontWeight: '500' }}>
+                          {renderTemplate(formData.subject, getPreviewData())}
+                        </span>
+                      </div>
+                    )}
+                    {formData.body && (
+                      <div>
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Cuerpo:</span>
+                        <p style={{ fontSize: '14px', color: '#111827', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                          {renderTemplate(formData.body, getPreviewData())}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
-                  <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}>Cancelar</button>
-                  <button type="submit" disabled={isSubmitting} style={{ padding: '8px 16px', backgroundColor: isSubmitting ? '#93c5fd' : '#2563eb', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isSubmitting ? 'not-allowed' : 'pointer' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsModalOpen(false)} 
+                    style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    disabled={isSubmitting} 
+                    style={{ 
+                      padding: '8px 16px', 
+                      backgroundColor: isSubmitting ? '#93c5fd' : '#2563eb', 
+                      color: 'white', 
+                      border: 'none', 
+                      borderRadius: '6px', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      cursor: isSubmitting ? 'not-allowed' : 'pointer' 
+                    }}
+                  >
                     {isSubmitting ? 'Guardando...' : 'Guardar Plantilla'}
                   </button>
                 </div>
@@ -316,25 +533,51 @@ export default function EmailTemplatesPage() {
 
                 {selectedTemplate.variables.length > 0 && (
                   <div style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '8px' }}>Valores para las Variables</label>
-                    {selectedTemplate.variables.map(v => (
-                      <div key={v} style={{ marginBottom: '8px' }}>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '2px' }}>{`{{${v}}}`}</label>
-                        <input 
-                          type="text" 
-                          value={testVariables[v] || ''} 
-                          onChange={(e) => handleTestVariableChange(v, e.target.value)} 
-                          placeholder={`Valor para ${v}`}
-                          style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} 
-                        />
-                      </div>
-                    ))}
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '8px' }}>
+                      Valores para las Variables (pre-llenados con ejemplos)
+                    </label>
+                    {selectedTemplate.variables.map(v => {
+                      const field = CONTACT_FIELDS.find(f => f.key === v);
+                      return (
+                        <div key={v} style={{ marginBottom: '8px' }}>
+                          <label style={{ display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '2px' }}>
+                            {field ? `${field.icon} ${field.label}` : v}
+                          </label>
+                          <input 
+                            type="text" 
+                            value={testVariables[v] || ''} 
+                            onChange={(e) => handleTestVariableChange(v, e.target.value)} 
+                            placeholder={field ? `Ej: ${field.example}` : `Valor para ${v}`}
+                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }} 
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
                 <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
-                  <button type="button" onClick={() => setIsTestModalOpen(false)} style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}>Cancelar</button>
-                  <button type="submit" disabled={isSendingTest} style={{ padding: '8px 16px', backgroundColor: isSendingTest ? '#93c5fd' : '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isSendingTest ? 'not-allowed' : 'pointer' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsTestModalOpen(false)} 
+                    style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    disabled={isSendingTest} 
+                    style={{ 
+                      padding: '8px 16px', 
+                      backgroundColor: isSendingTest ? '#93c5fd' : '#10b981', 
+                      color: 'white', 
+                      border: 'none', 
+                      borderRadius: '6px', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      cursor: isSendingTest ? 'not-allowed' : 'pointer' 
+                    }}
+                  >
                     {isSendingTest ? 'Enviando...' : 'Enviar Correo de Prueba'}
                   </button>
                 </div>
