@@ -35,6 +35,14 @@ export default function ContactsPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
 
+  // ==========================================
+  // ESTADOS NUEVOS: MODAL DE WHATSAPP
+  // ==========================================
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [whatsAppContact, setWhatsAppContact] = useState<Contact | null>(null);
+  const [whatsAppMessage, setWhatsAppMessage] = useState('');
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
+
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -175,7 +183,6 @@ export default function ContactsPage() {
       return;
     }
 
-    // Verificar límite de contactos del plan del tenant
     try {
       const tenant = await tenantService.getTenant(user.tenantId);
       if (tenant?.limits?.maxContacts) {
@@ -317,6 +324,56 @@ export default function ContactsPage() {
     }
   };
 
+  // ==========================================
+  // LÓGICA NUEVA: ENVÍO DE WHATSAPP
+  // ==========================================
+  const openWhatsAppModal = (contact: Contact) => {
+    if (!contact.phone) {
+      setError(`El contacto ${contact.firstName} ${contact.lastName} no tiene teléfono registrado.`);
+      return;
+    }
+    setWhatsAppContact(contact);
+    // Mensaje inicial con saludo personalizado
+    setWhatsAppMessage(`Hola ${contact.firstName}, te escribo de Appyempresa.`);
+    setIsWhatsAppModalOpen(true);
+  };
+
+  const handleSendWhatsApp = async () => {
+    if (!whatsAppContact || !whatsAppMessage.trim()) return;
+
+    setIsSendingWhatsApp(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: whatsAppContact.phone,
+          message: whatsAppMessage.trim(),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        const errorMsg = result.error?.message || result.error?.details || 'Error desconocido';
+        throw new Error(errorMsg);
+      }
+
+      alert(`✅ Mensaje enviado a ${whatsAppContact.firstName} ${whatsAppContact.lastName}\n\nID del mensaje: ${result.messageId}`);
+      setIsWhatsAppModalOpen(false);
+      setWhatsAppContact(null);
+      setWhatsAppMessage('');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+      setError(`Error al enviar WhatsApp: ${errorMessage}`);
+      console.error('[WhatsApp] Error:', err);
+    } finally {
+      setIsSendingWhatsApp(false);
+    }
+  };
+
   if (authLoading || isFetching) {
     return (
       <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb' }}>
@@ -355,7 +412,7 @@ export default function ContactsPage() {
 
             <button type="button" onClick={openCampaignModal} disabled={selectedContactIds.size === 0} style={{ backgroundColor: selectedContactIds.size > 0 ? '#10b981' : '#9ca3af', color: 'white', padding: '12px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-              Enviar Campaña ({selectedContactIds.size})
+              Enviar Campaña Email ({selectedContactIds.size})
             </button>
           </div>
         </div>
@@ -397,7 +454,26 @@ export default function ContactsPage() {
                       <td style={{ padding: '16px 24px', fontSize: '14px', color: '#6b7280' }}>{contact.phone || '-'}</td>
                       <td style={{ padding: '16px 24px', fontSize: '14px', color: '#6b7280' }}>{contact.type}</td>
                       <td style={{ padding: '16px 24px', fontSize: '14px' }}>
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          <button 
+                            onClick={() => openWhatsAppModal(contact)}
+                            disabled={!contact.phone}
+                            style={{ 
+                              padding: '6px 12px', 
+                              backgroundColor: contact.phone ? '#000000' : '#d1d5db', 
+                              color: 'white', 
+                              border: 'none', 
+                              borderRadius: '4px', 
+                              fontSize: '12px', 
+                              fontWeight: '600', 
+                              cursor: contact.phone ? 'pointer' : 'not-allowed',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            📱 WhatsApp
+                          </button>
                           <button onClick={() => openEditModal(contact)} style={{ color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }}>Editar</button>
                           <button onClick={() => handleDelete(contact.id)} style={{ color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }}>Eliminar</button>
                         </div>
@@ -556,7 +632,7 @@ export default function ContactsPage() {
           </div>
         )}
 
-        {/* MODAL: ENVIAR CAMPAÑA */}
+        {/* MODAL: ENVIAR CAMPAÑA EMAIL */}
         {isCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
             <div style={{ width: '100%', maxWidth: '500px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
@@ -582,8 +658,109 @@ export default function ContactsPage() {
 
               <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
                 <button type="button" onClick={() => setIsCampaignModalOpen(false)} style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}>Cancelar</button>
-                <button type="button" onClick={handleSendCampaign} disabled={isSendingCampaign} style={{ padding: '8px 16px', backgroundColor: isSendingCampaign ? '#93c5fd' : '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isSendingCampaign ? 'not-allowed' : 'pointer' }}>
+                <button type="button" onClick={handleSendCampaign} disabled={isSendingCampaign} style={{ padding: '8px 16px', backgroundColor: isSendingCampaign ? '#93c5fd' : '#10b981', color: 'white', border: 'none',borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isSendingCampaign ? 'not-allowed' : 'pointer' }}>
                   {isSendingCampaign ? 'Enviando...' : 'Confirmar y Enviar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================== */}
+        {/* MODAL NUEVO: ENVIAR WHATSAPP               */}
+        {/* ========================================== */}
+        {isWhatsAppModalOpen && whatsAppContact && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
+            <div style={{ width: '100%', maxWidth: '560px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
+              <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  📱 Enviar WhatsApp
+                </h2>
+                <button 
+                  onClick={() => { setIsWhatsAppModalOpen(false); setWhatsAppContact(null); setWhatsAppMessage(''); }}
+                  style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, marginBottom: '4px' }}>Destinatario:</p>
+                <p style={{ fontSize: '14px', fontWeight: '600', color: '#111827', margin: 0 }}>
+                  {whatsAppContact.firstName} {whatsAppContact.lastName}
+                </p>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, marginTop: '4px' }}>
+                  {whatsAppContact.companyName && `${whatsAppContact.companyName} • `}
+                  📞 {whatsAppContact.phone}
+                </p>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
+                  Mensaje
+                </label>
+                <textarea
+                  value={whatsAppMessage}
+                  onChange={(e) => setWhatsAppMessage(e.target.value)}
+                  rows={6}
+                  maxLength={4096}
+                  placeholder="Escribe tu mensaje aquí..."
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    backgroundColor: '#ffffff',
+                    color: '#111827',
+                    fontFamily: 'inherit',
+                    resize: 'vertical',
+                    lineHeight: '1.5'
+                  }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                  <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>
+                    El mensaje se enviará desde: <strong>+57 310 652 4453</strong>
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                    {whatsAppMessage.length}/4096
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ padding: '12px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', marginBottom: '16px' }}>
+                <p style={{ fontSize: '12px', color: '#92400e', margin: 0 }}>
+                  💡 <strong>Importante:</strong> Meta cobra ~$0.08 USD por conversación de marketing iniciada. El primer mensaje de cada ventana de 24h genera el costo; los siguientes mensajes en esa ventana son gratis.
+                </p>
+              </div>
+
+              <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
+                <button 
+                  type="button" 
+                  onClick={() => { setIsWhatsAppModalOpen(false); setWhatsAppContact(null); setWhatsAppMessage(''); }} 
+                  style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="button" 
+                  onClick={handleSendWhatsApp} 
+                  disabled={isSendingWhatsApp || whatsAppMessage.trim().length === 0}
+                  style={{ 
+                    padding: '8px 16px', 
+                    backgroundColor: isSendingWhatsApp || whatsAppMessage.trim().length === 0 ? '#9ca3af' : '#000000', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: '6px', 
+                    fontSize: '14px', 
+                    fontWeight: '500', 
+                    cursor: isSendingWhatsApp || whatsAppMessage.trim().length === 0 ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {isSendingWhatsApp ? 'Enviando...' : '📱 Enviar WhatsApp'}
                 </button>
               </div>
             </div>
