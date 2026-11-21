@@ -323,13 +323,12 @@ export default function ContactsPage() {
   // ==========================================
   // LÓGICA NUEVA: CAMPAÑA WHATSAPP MASIVA
   // ==========================================
-  const openWhatsAppCampaignModal = () => {
+    const openWhatsAppCampaignModal = () => {
     if (selectedContactIds.size === 0) {
       setError('Por favor selecciona al menos un contacto.');
       return;
     }
 
-    // Filtrar solo contactos con teléfono
     const contactsWithPhone = contacts.filter(c => selectedContactIds.has(c.id) && c.phone);
     
     if (contactsWithPhone.length === 0) {
@@ -342,12 +341,11 @@ export default function ContactsPage() {
       return;
     }
 
-    // Mensaje inicial con placeholder de personalización
-    setWhatsAppCampaignMessage('Hola {{nombre}}, te escribo de Appyempresa.');
+    setWhatsAppCampaignMessage('saludo_alcaldes'); // Ahora guarda el nombre de la plantilla
     setIsWhatsAppCampaignModalOpen(true);
   };
 
-  const handleSendWhatsAppCampaign = async () => {
+    const handleSendWhatsAppCampaign = async () => {
     if (!user || selectedContactIds.size === 0 || !whatsAppCampaignMessage.trim()) return;
 
     setIsSendingWhatsAppCampaign(true);
@@ -357,21 +355,19 @@ export default function ContactsPage() {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error('Sesión expirada.');
 
-      // Filtrar solo contactos con teléfono
       const contactsWithPhone = contacts.filter(c => selectedContactIds.has(c.id) && c.phone);
       
       let successCount = 0;
       let failedCount = 0;
       const errors: string[] = [];
 
-      // Enviar uno por uno (WhatsApp API no soporta batch nativo como email)
       for (const contact of contactsWithPhone) {
         try {
-          // Reemplazar variables en el mensaje
-          let personalizedMessage = whatsAppCampaignMessage
-            .replace(/\{\{nombre\}\}/g, contact.firstName)
-            .replace(/\{\{empresa\}\}/g, contact.companyName || '')
-            .replace(/\{\{email\}\}/g, contact.email || '');
+          // Mapeo de variables: {{1}} = nombre, {{2}} = municipio (companyName)
+          const variables = [
+            contact.firstName || '', // {{1}}
+            contact.companyName || '', // {{2}}
+          ];
 
           const response = await fetch('/api/whatsapp/send', {
             method: 'POST',
@@ -380,8 +376,10 @@ export default function ContactsPage() {
               'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({
+              mode: 'template',
               to: contact.phone!,
-              message: personalizedMessage,
+              templateName: whatsAppCampaignMessage, // nombre de la plantilla
+              variables,
             }),
           });
 
@@ -712,7 +710,7 @@ export default function ContactsPage() {
         )}
 
         {/* MODAL NUEVO: CAMPAÑA WHATSAPP MASIVA */}
-        {isWhatsAppCampaignModalOpen && (
+                {isWhatsAppCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
             <div style={{ width: '100%', maxWidth: '600px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
@@ -729,55 +727,54 @@ export default function ContactsPage() {
 
               <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#dcfce7', borderRadius: '6px', border: '1px solid #86efac' }}>
                 <p style={{ fontSize: '14px', color: '#166534', margin: 0 }}>
-                  Vas a enviar un mensaje de WhatsApp a <strong>{contacts.filter(c => selectedContactIds.has(c.id) && c.phone).length} contacto(s)</strong> con teléfono.
+                  Vas a enviar un mensaje de WhatsApp a <strong>{contacts.filter(c => selectedContactIds.has(c.id) && c.phone).length} contacto(s)</strong> usando una plantilla aprobada por Meta.
                 </p>
               </div>
 
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
-                  Mensaje (usa variables como {'{{nombre}}'}, {'{{empresa}}'}, {'{{email}}'})
+                  Plantilla a usar
                 </label>
-                <textarea
+                <select
                   value={whatsAppCampaignMessage}
                   onChange={(e) => setWhatsAppCampaignMessage(e.target.value)}
-                  rows={8}
-                  maxLength={4096}
-                  placeholder="Ej: Hola {{nombre}}, te escribo de Appyempresa."
                   style={{
                     width: '100%',
-                    padding: '12px',
+                    padding: '10px 12px',
                     border: '1px solid #d1d5db',
                     borderRadius: '6px',
                     fontSize: '14px',
                     backgroundColor: '#ffffff',
-                    color: '#111827',
-                    fontFamily: 'inherit',
-                    resize: 'vertical',
-                    lineHeight: '1.5'
+                    color: '#111827'
                   }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                  <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>
-                    Desde: <strong>+57 310 652 4453</strong>
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
-                    {whatsAppCampaignMessage.length}/4096
-                  </p>
-                </div>
+                >
+                  <option value="saludo_alcaldes">📝 Saludo a Alcaldes</option>
+                </select>
+                <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                  Solo puedes enviar plantillas aprobadas por Meta para iniciar nuevas conversaciones.
+                </p>
               </div>
 
-              <div style={{ padding: '12px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', marginBottom: '16px' }}>
-                <p style={{ fontSize: '12px', color: '#92400e', margin: 0 }}>
-                  💡 <strong>Variables disponibles:</strong>{' '}
-                  <code style={{ backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '3px' }}>{'{{nombre}}'}</code>{' '}
-                  <code style={{ backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '3px' }}>{'{{empresa}}'}</code>{' '}
-                  <code style={{ backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '3px' }}>{'{{email}}'}</code>
+              <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb', marginBottom: '16px' }}>
+                <p style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '8px', textTransform: 'uppercase' }}>
+                  👁️ Vista previa (con datos reales de los contactos)
+                </p>
+                <p style={{ fontSize: '13px', fontWeight: '600', color: '#25D366', marginBottom: '4px' }}>
+                  Appyempresa
+                </p>
+                <p style={{ fontSize: '13px', color: '#111827', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                  Hola <strong>[Nombre del contacto]</strong>, te escribo de Appyempresa.{'\n\n'}
+                  Tenemos una propuesta especial para la Alcaldía de <strong>[Empresa/Municipio]</strong> que creemos puede ser de su interés, en esta era de automatizar todos los servicios que ustedes ofrecen.{'\n\n'}
+                  ¿Te gustaría recibir información completa de nuestras aplicaciones y automatizaciones para la Alcaldía?
+                </p>
+                <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '8px' }}>
+                  Appyempresa S.A.S • +57 310 652 4453
                 </p>
               </div>
 
               <div style={{ padding: '12px', backgroundColor: '#fef3c7', border: '1px solid #fde047', borderRadius: '6px', marginBottom: '16px' }}>
                 <p style={{ fontSize: '12px', color: '#854d0e', margin: 0 }}>
-                  ⚠️ <strong>Importante:</strong> Meta cobra ~$0.08 USD por conversación de marketing iniciada. El primer mensaje de cada ventana de 24h genera el costo.
+                  ⚠️ <strong>Costo:</strong> Meta cobra ~$0.08 USD por conversación de marketing iniciada. Si el alcalde responde, se abre una ventana de 24h gratis para mensajes libres.
                 </p>
               </div>
 
@@ -792,16 +789,16 @@ export default function ContactsPage() {
                 <button 
                   type="button" 
                   onClick={handleSendWhatsAppCampaign} 
-                  disabled={isSendingWhatsAppCampaign || whatsAppCampaignMessage.trim().length === 0}
+                  disabled={isSendingWhatsAppCampaign || !whatsAppCampaignMessage}
                   style={{ 
                     padding: '8px 16px', 
-                    backgroundColor: isSendingWhatsAppCampaign || whatsAppCampaignMessage.trim().length === 0 ? '#9ca3af' : '#25D366', 
+                    backgroundColor: isSendingWhatsAppCampaign || !whatsAppCampaignMessage ? '#9ca3af' : '#25D366', 
                     color: 'white', 
                     border: 'none', 
                     borderRadius: '6px', 
                     fontSize: '14px', 
                     fontWeight: '500', 
-                    cursor: isSendingWhatsAppCampaign || whatsAppCampaignMessage.trim().length === 0 ? 'not-allowed' : 'pointer',
+                    cursor: isSendingWhatsAppCampaign || !whatsAppCampaignMessage ? 'not-allowed' : 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '6px'

@@ -1,9 +1,5 @@
 // src/types/whatsapp.types.ts
 
-// ==========================================
-// TIPOS DE WHATSAPP BUSINESS API (Meta Cloud API)
-// ==========================================
-
 export interface WhatsAppSendResult {
   success: boolean;
   messageId?: string;
@@ -26,6 +22,16 @@ export interface WhatsAppTextMessage {
   };
 }
 
+export interface WhatsAppTemplateParameter {
+  type: 'text';
+  text: string;
+}
+
+export interface WhatsAppTemplateComponent {
+  type: 'body' | 'header' | 'button';
+  parameters?: WhatsAppTemplateParameter[];
+}
+
 export interface WhatsAppTemplateMessage {
   messaging_product: 'whatsapp';
   recipient_type: 'individual';
@@ -40,26 +46,15 @@ export interface WhatsAppTemplateMessage {
   };
 }
 
-export interface WhatsAppTemplateComponent {
-  type: 'body' | 'header' | 'button';
-  parameters?: WhatsAppTemplateParameter[];
-}
-
-export interface WhatsAppTemplateParameter {
-  type: 'text' | 'currency' | 'date_time';
-  text?: string;
-}
-
 export type WhatsAppMessage = WhatsAppTextMessage | WhatsAppTemplateMessage;
 
-// Respuesta de la API de Meta al enviar un mensaje
 export interface WhatsAppSendResponse {
   messaging_product: string;
-  contacts: Array<{
+  contacts?: Array<{
     input: string;
     wa_id: string;
   }>;
-  messages: Array<{
+  messages?: Array<{
     id: string;
     message_status?: string;
   }>;
@@ -76,9 +71,30 @@ export interface WhatsAppSendResponse {
   };
 }
 
-// Resultado de validación de número
 export interface PhoneValidationResult {
   valid: boolean;
-  normalized?: string; // Ej: "573106524453"
+  normalized?: string;
   error?: string;
 }
+
+// ==========================================
+// NUEVO: Tipos para plantillas aprobadas
+// ==========================================
+export interface ApprovedTemplate {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  variables: string[];
+}
+
+// Lista de plantillas aprobadas en Meta (mantener sincronizado con Meta Business)
+export const APPROVED_TEMPLATES: ApprovedTemplate[] = [
+  {
+    id: 'saludo_alcaldes',
+    name: 'saludo_alcaldes',
+    displayName: 'Saludo a Alcaldes',
+    description: 'Plantilla para enviar propuesta a alcaldías de Caldas',
+    variables: ['nombre', 'municipio'], // {{1}} = nombre, {{2}} = municipio
+  },
+];
