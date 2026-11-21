@@ -323,7 +323,7 @@ export default function ContactsPage() {
   // ==========================================
   // LÓGICA NUEVA: CAMPAÑA WHATSAPP MASIVA
   // ==========================================
-    const openWhatsAppCampaignModal = () => {
+      const openWhatsAppCampaignModal = () => {
     if (selectedContactIds.size === 0) {
       setError('Por favor selecciona al menos un contacto.');
       return;
@@ -345,7 +345,7 @@ export default function ContactsPage() {
     setIsWhatsAppCampaignModalOpen(true);
   };
 
-    const handleSendWhatsAppCampaign = async () => {
+      const handleSendWhatsAppCampaign = async () => {
     if (!user || selectedContactIds.size === 0 || !whatsAppCampaignMessage.trim()) return;
 
     setIsSendingWhatsAppCampaign(true);
@@ -363,10 +363,9 @@ export default function ContactsPage() {
 
       for (const contact of contactsWithPhone) {
         try {
-          // Mapeo de variables: {{1}} = nombre, {{2}} = municipio (companyName)
           const variables = [
-            contact.firstName || '', // {{1}}
-            contact.companyName || '', // {{2}}
+            contact.firstName || '',
+            contact.companyName || '',
           ];
 
           const response = await fetch('/api/whatsapp/send', {
@@ -378,7 +377,7 @@ export default function ContactsPage() {
             body: JSON.stringify({
               mode: 'template',
               to: contact.phone!,
-              templateName: whatsAppCampaignMessage, // nombre de la plantilla
+              templateName: whatsAppCampaignMessage,
               variables,
             }),
           });
@@ -710,7 +709,7 @@ export default function ContactsPage() {
         )}
 
         {/* MODAL NUEVO: CAMPAÑA WHATSAPP MASIVA */}
-                {isWhatsAppCampaignModalOpen && (
+                       {isWhatsAppCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
             <div style={{ width: '100%', maxWidth: '600px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
@@ -757,14 +756,14 @@ export default function ContactsPage() {
 
               <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb', marginBottom: '16px' }}>
                 <p style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '8px', textTransform: 'uppercase' }}>
-                  👁️ Vista previa (con datos reales de los contactos)
+                  👁️ Vista previa
                 </p>
                 <p style={{ fontSize: '13px', fontWeight: '600', color: '#25D366', marginBottom: '4px' }}>
                   Appyempresa
                 </p>
                 <p style={{ fontSize: '13px', color: '#111827', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
                   Hola <strong>[Nombre del contacto]</strong>, te escribo de Appyempresa.{'\n\n'}
-                  Tenemos una propuesta especial para la Alcaldía de <strong>[Empresa/Municipio]</strong> que creemos puede ser de su interés, en esta era de automatizar todos los servicios que ustedes ofrecen.{'\n\n'}
+                  Tenemos una propuesta especial para la Alcaldía de <strong>[Municipio]</strong> que creemos puede ser de su interés, en esta era de automatizar todos los servicios que ustedes ofrecen.{'\n\n'}
                   ¿Te gustaría recibir información completa de nuestras aplicaciones y automatizaciones para la Alcaldía?
                 </p>
                 <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '8px' }}>
@@ -774,7 +773,7 @@ export default function ContactsPage() {
 
               <div style={{ padding: '12px', backgroundColor: '#fef3c7', border: '1px solid #fde047', borderRadius: '6px', marginBottom: '16px' }}>
                 <p style={{ fontSize: '12px', color: '#854d0e', margin: 0 }}>
-                  ⚠️ <strong>Costo:</strong> Meta cobra ~$0.08 USD por conversación de marketing iniciada. Si el alcalde responde, se abre una ventana de 24h gratis para mensajes libres.
+                  ⚠️ <strong>Costo:</strong> Meta cobra ~$0.08 USD por conversación de marketing iniciada.
                 </p>
               </div>
 
