@@ -11,6 +11,7 @@ import { tenantService } from '@/services/tenant.service';
 import { importService, ParsedContact } from '@/services/import.service';
 import { Contact, ContactType } from '@/types/crm.types';
 import { EmailTemplate } from '@/types/email.types';
+import { WhatsAppTemplate } from '@/types/whatsappTemplate.types';
 
 export default function ContactsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -37,9 +38,11 @@ export default function ContactsPage() {
   // ==========================================
   // ESTADOS NUEVOS: CAMPAÑA WHATSAPP MASIVA
   // ==========================================
-  const [isWhatsAppCampaignModalOpen, setIsWhatsAppCampaignModalOpen] = useState(false);
+    const [isWhatsAppCampaignModalOpen, setIsWhatsAppCampaignModalOpen] = useState(false);
   const [whatsAppCampaignMessage, setWhatsAppCampaignMessage] = useState('');
   const [isSendingWhatsAppCampaign, setIsSendingWhatsAppCampaign] = useState(false);
+  const [whatsAppTemplates, setWhatsAppTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [whatsAppTemplatesLoading, setWhatsAppTemplatesLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -75,6 +78,46 @@ export default function ContactsPage() {
       loadData();
     }
   }, [initialized, authLoading, user, loadData]);
+
+    // Cargar plantillas de WhatsApp aprobadas al montar el componente
+  useEffect(() => {
+    if (!user) return;
+
+    const loadWhatsAppTemplates = async () => {
+      setWhatsAppTemplatesLoading(true);
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) return;
+
+        const response = await fetch('/api/whatsapp/templates', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          console.error('Error cargando plantillas WhatsApp:', response.status);
+          return;
+        }
+
+        const result = await response.json();
+        if (result.success && Array.isArray(result.templates)) {
+          // Solo mostrar plantillas aprobadas
+          const approvedTemplates = result.templates.filter(
+            (t: WhatsAppTemplate) => t.status === 'APPROVED'
+          );
+          setWhatsAppTemplates(approvedTemplates);
+        }
+      } catch (err) {
+        console.error('[WhatsAppTemplates] Error loading:', err);
+      } finally {
+        setWhatsAppTemplatesLoading(false);
+      }
+    };
+
+    loadWhatsAppTemplates();
+  }, [user]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -320,6 +363,21 @@ export default function ContactsPage() {
     }
   };
 
+
+    // Helper: determina qué campo del contacto llena cada variable de la plantilla
+  const getVariableSource = (variableIndex: number): string => {
+    // Mapeo por defecto: primera variable = nombre, segunda = empresa/municipio
+    const sources: Record<number, string> = {
+      0: 'firstName del contacto',
+      1: 'companyName del contacto',
+      2: 'email del contacto',
+      3: 'phone del contacto',
+    };
+    return sources[variableIndex] || `variable ${variableIndex + 1}`;
+  };
+
+  
+
   // ==========================================
   // LÓGICA NUEVA: CAMPAÑA WHATSAPP MASIVA
   // ==========================================
@@ -363,10 +421,20 @@ export default function ContactsPage() {
 
       for (const contact of contactsWithPhone) {
         try {
-          const variables = [
-            contact.firstName || '',
-            contact.companyName || '',
-          ];
+                    // Generar variables dinámicamente según la plantilla seleccionada
+          const selectedTemplate = whatsAppTemplates.find(t => t.name === whatsAppCampaignMessage);
+          const variables = selectedTemplate
+            ? selectedTemplate.variables.map((v, idx) => {
+                // Mapeo estándar: 0=firstName, 1=companyName, 2=email, 3=phone
+                const sources: Record<number, string> = {
+                  0: contact.firstName || '',
+                  1: contact.companyName || '',
+                  2: contact.email || '',
+                  3: contact.phone || '',
+                };
+                return sources[idx] || '';
+              })
+            : [contact.firstName || '', contact.companyName || ''];
 
           const response = await fetch('/api/whatsapp/send', {
             method: 'POST',
@@ -730,45 +798,130 @@ export default function ContactsPage() {
                 </p>
               </div>
 
-              <div style={{ marginBottom: '16px' }}>
+                            <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
                   Plantilla a usar
                 </label>
-                <select
-                  value={whatsAppCampaignMessage}
-                  onChange={(e) => setWhatsAppCampaignMessage(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '14px',
-                    backgroundColor: '#ffffff',
-                    color: '#111827'
-                  }}
-                >
-                  <option value="saludo_alcaldes">📝 Saludo a Alcaldes</option>
-                </select>
+                {whatsAppTemplatesLoading ? (
+                  <div style={{ padding: '10px 12px', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', fontSize: '14px', color: '#6b7280' }}>
+                    Cargando plantillas...
+                  </div>
+                ) : whatsAppTemplates.length === 0 ? (
+                  <div style={{ padding: '12px', backgroundColor: '#fef3c7', border: '1px solid #fde047', borderRadius: '6px', fontSize: '13px', color: '#854d0e' }}>
+                    ⚠️ No hay plantillas aprobadas.{' '}
+                    <Link href="/whatsapp/templates" style={{ color: '#2563eb', fontWeight: '600' }}>
+                      Ir a sincronizar con Meta →
+                    </Link>
+                  </div>
+                ) : (
+                  <select
+                    value={whatsAppCampaignMessage}
+                    onChange={(e) => setWhatsAppCampaignMessage(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: '#ffffff',
+                      color: '#111827'
+                    }}
+                  >
+                    {whatsAppTemplates.map(template => (
+                      <option key={template.metaTemplateId} value={template.name}>
+                        📝 {template.name} ({template.variables.length} variables)
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
                   Solo puedes enviar plantillas aprobadas por Meta para iniciar nuevas conversaciones.
                 </p>
               </div>
 
-              <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb', marginBottom: '16px' }}>
+                            <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb', marginBottom: '16px' }}>
                 <p style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '8px', textTransform: 'uppercase' }}>
-                  👁️ Vista previa
+                  👁️ Vista previa de la plantilla seleccionada
                 </p>
-                <p style={{ fontSize: '13px', fontWeight: '600', color: '#25D366', marginBottom: '4px' }}>
-                  Appyempresa
-                </p>
-                <p style={{ fontSize: '13px', color: '#111827', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
-                  Hola <strong>[Nombre del contacto]</strong>, te escribo de Appyempresa.{'\n\n'}
-                  Tenemos una propuesta especial para la Alcaldía de <strong>[Municipio]</strong> que creemos puede ser de su interés, en esta era de automatizar todos los servicios que ustedes ofrecen.{'\n\n'}
-                  ¿Te gustaría recibir información completa de nuestras aplicaciones y automatizaciones para la Alcaldía?
-                </p>
-                <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '8px' }}>
-                  Appyempresa S.A.S • +57 310 652 4453
-                </p>
+                {(() => {
+                  const selectedTemplate = whatsAppTemplates.find(t => t.name === whatsAppCampaignMessage);
+                  
+                  if (!selectedTemplate) {
+                    return (
+                      <p style={{ fontSize: '13px', color: '#6b7280', fontStyle: 'italic' }}>
+                        Selecciona una plantilla para ver la vista previa.
+                      </p>
+                    );
+                  }
+
+                  // Generar preview reemplazando variables con ejemplos
+                  let previewText = selectedTemplate.previewText;
+                  selectedTemplate.variables.forEach(v => {
+                    previewText = previewText.replace(
+                      new RegExp(`\\{\\{${v.index}\\}\\}`, 'g'),
+                      `[${v.example}]`
+                    );
+                  });
+
+                  return (
+                    <div style={{ backgroundColor: '#dcf8c6', padding: '12px', borderRadius: '6px', maxWidth: '100%' }}>
+                      {selectedTemplate.headerText && (
+                        <p style={{ fontSize: '13px', fontWeight: 'bold', color: '#075e54', margin: '0 0 8px' }}>
+                          {selectedTemplate.headerText.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
+                            const variable = selectedTemplate.variables.find(v => v.index === parseInt(idx, 10));
+                            return variable ? `[${variable.example}]` : `[variable ${idx}]`;
+                          })}
+                        </p>
+                      )}
+                      <p style={{ fontSize: '13px', color: '#303030', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                        {previewText}
+                      </p>
+                      {selectedTemplate.footerText && (
+                        <p style={{ fontSize: '11px', color: '#8696a0', margin: '8px 0 0', fontStyle: 'italic' }}>
+                          {selectedTemplate.footerText}
+                        </p>
+                      )}
+                      {selectedTemplate.hasButtons && (
+                        <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(0, 0, 0, 0.1)' }}>
+                          <p style={{ fontSize: '11px', color: '#0088cc', margin: 0, fontWeight: '600' }}>
+                            [Botón de respuesta rápida]
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Lista de variables de la plantilla seleccionada */}
+                {(() => {
+                  const selectedTemplate = whatsAppTemplates.find(t => t.name === whatsAppCampaignMessage);
+                  if (!selectedTemplate || selectedTemplate.variables.length === 0) return null;
+
+                  return (
+                    <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
+                      <p style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '6px', textTransform: 'uppercase' }}>
+                        Variables que se llenarán automáticamente:
+                      </p>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {selectedTemplate.variables.map((v, idx) => (
+                          <code
+                            key={v.index}
+                            style={{
+                              fontSize: '11px',
+                              padding: '2px 8px',
+                              backgroundColor: 'white',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '4px',
+                              color: '#7c3aed',
+                            }}
+                          >
+                            {`{{${v.index}}}`} → {getVariableSource(idx)}
+                          </code>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div style={{ padding: '12px', backgroundColor: '#fef3c7', border: '1px solid #fde047', borderRadius: '6px', marginBottom: '16px' }}>

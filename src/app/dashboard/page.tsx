@@ -168,6 +168,34 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+
+                        <Link 
+            href="/email" 
+            className="block rounded-lg bg-white p-6 shadow hover:shadow-md transition-shadow border border-gray-100"
+          >
+            <h2 className="text-lg font-semibold text-gray-900">Plantillas de Correo</h2>
+            <p className="mt-2 text-sm text-gray-600">Crea y gestiona plantillas de email con variables dinámicas.</p>
+            <span className="mt-4 inline-block text-sm font-medium text-blue-600">Ver plantillas →</span>
+          </Link>
+
+          <Link 
+            href="/whatsapp/templates" 
+            className="block rounded-lg bg-white p-6 shadow hover:shadow-md transition-shadow border border-gray-100"
+          >
+            <h2 className="text-lg font-semibold text-gray-900">📱 Plantillas de WhatsApp</h2>
+            <p className="mt-2 text-sm text-gray-600">Gestiona las plantillas aprobadas por Meta para enviar mensajes masivos.</p>
+            <span className="mt-4 inline-block text-sm font-medium text-blue-600">Ver plantillas →</span>
+          </Link>
+
+          <Link 
+            href="/analytics" 
+            className="block rounded-lg bg-white p-6 shadow hover:shadow-md transition-shadow border border-gray-100"
+          >
+            <h2 className="text-lg font-semibold text-gray-900">📊 Analíticas de Email</h2>
+            <p className="mt-2 text-sm text-gray-600">Monitorea el rendimiento de tus campañas con métricas detalladas.</p>
+            <span className="mt-4 inline-block text-sm font-medium text-blue-600">Ver analíticas →</span>
+          </Link>
+
               {/* Abiertos */}
               <div className="rounded-lg bg-white p-4 shadow-sm border border-blue-100">
                 <div className="flex items-center justify-between">
