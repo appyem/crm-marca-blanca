@@ -187,6 +187,15 @@ export default function DashboardPage() {
             <span className="mt-4 inline-block text-sm font-medium text-blue-600">Ver plantillas →</span>
           </Link>
 
+                    <Link 
+            href="/whatsapp/inbox" 
+            className="block rounded-lg bg-white p-6 shadow hover:shadow-md transition-shadow border border-gray-100"
+          >
+            <h2 className="text-lg font-semibold text-gray-900">📥 Inbox WhatsApp</h2>
+            <p className="mt-2 text-sm text-gray-600">Responde conversaciones en tiempo real, gestiona pendientes y atendidas.</p>
+            <span className="mt-4 inline-block text-sm font-medium text-blue-600">Abrir bandeja →</span>
+          </Link>
+
           <Link 
             href="/analytics" 
             className="block rounded-lg bg-white p-6 shadow hover:shadow-md transition-shadow border border-gray-100"
