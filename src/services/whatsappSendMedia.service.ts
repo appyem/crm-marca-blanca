@@ -25,14 +25,34 @@ interface SendMediaParams {
 }
 
 const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB
+const SUPPORTED_VIDEO_TYPES = ['video/mp4', 'video/3gpp'];
+const SUPPORTED_AUDIO_TYPES = ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg', 'audio/opus'];
 
 export const whatsappSendMediaService = {
   async sendMediaMessage(params: SendMediaParams): Promise<{ messageId: string; blobUrl: string }> {
     const token = process.env.WHATSAPP_TOKEN;
     if (!token) throw new Error('WHATSAPP_TOKEN no está configurado.');
 
+    console.log('[whatsappSendMedia] Iniciando envío:', {
+      to: params.to,
+      mediaType: params.mediaType,
+      mimeType: params.mimeType,
+      fileName: params.fileName,
+      fileSize: params.buffer.length,
+      hasCaption: !!params.caption,
+    });
+
     if (params.buffer.length > MAX_FILE_SIZE) {
-      throw new Error(`El archivo es muy grande. Máximo ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
+      throw new Error(`El archivo es muy grande (${(params.buffer.length / 1024 / 1024).toFixed(1)}MB). Máximo ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
+    }
+
+    // Validar formatos soportados
+    if (params.mediaType === 'video' && !SUPPORTED_VIDEO_TYPES.includes(params.mimeType)) {
+      throw new Error(`Formato de video no soportado: ${params.mimeType}. WhatsApp solo acepta: ${SUPPORTED_VIDEO_TYPES.join(', ')}. Convierte tu video a MP4.`);
+    }
+
+    if (params.mediaType === 'audio' && !SUPPORTED_AUDIO_TYPES.includes(params.mimeType)) {
+      console.warn(`[whatsappSendMedia] Formato de audio no estándar: ${params.mimeType}. Intentando enviar de todos modos.`);
     }
 
     const mediaType = params.mediaType;
@@ -44,6 +64,8 @@ export const whatsappSendMediaService = {
       contentType: params.mimeType,
     });
 
+    console.log('[whatsappSendMedia] Archivo subido a Blob:', blob.url);
+
     // 2. Subir a Meta Cloud API para obtener media_id
     const metaFormData = new FormData();
     metaFormData.append('messaging_product', 'whatsapp');
@@ -53,6 +75,8 @@ export const whatsappSendMediaService = {
       new Blob([new Uint8Array(params.buffer)], { type: params.mimeType }),
       params.fileName
     );
+
+    console.log('[whatsappSendMedia] Subiendo a Meta...');
 
     const uploadResponse = await fetch(
       `${META_GRAPH_API_URL}/${META_GRAPH_API_VERSION}/${params.phoneNumberId}/media`,
@@ -65,6 +89,7 @@ export const whatsappSendMediaService = {
 
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
+      console.error('[whatsappSendMedia] Error en upload a Meta:', errorText);
       throw new Error(`Meta rechazó el archivo (${uploadResponse.status}): ${errorText}`);
     }
 
@@ -84,19 +109,22 @@ export const whatsappSendMediaService = {
       type: mediaType,
     };
 
+    // IMPORTANTE: audio NO acepta caption, solo image/video/document
     const mediaPayload: { id: string; caption?: string; filename?: string } = {
       id: metaMediaId,
     };
-    if (params.caption && params.caption.trim().length > 0) {
+
+    if (mediaType !== 'audio' && params.caption && params.caption.trim().length > 0) {
       mediaPayload.caption = params.caption.trim();
     }
+
     if (mediaType === 'document') {
       mediaPayload.filename = params.fileName;
     }
 
     sendBody[mediaType] = mediaPayload;
 
-    console.log('[whatsappSendMedia] Sending message with payload:', JSON.stringify(sendBody, null, 2));
+    console.log('[whatsappSendMedia] Enviando mensaje a Meta:', JSON.stringify(sendBody, null, 2));
 
     const sendResponse = await fetch(
       `${META_GRAPH_API_URL}/${META_GRAPH_API_VERSION}/${params.phoneNumberId}/messages`,
@@ -112,11 +140,14 @@ export const whatsappSendMediaService = {
 
     if (!sendResponse.ok) {
       const errorText = await sendResponse.text();
+      console.error('[whatsappSendMedia] Error en envío a Meta:', errorText);
       throw new Error(`Meta rechazó el envío (${sendResponse.status}): ${errorText}`);
     }
 
     const sendResult = (await sendResponse.json()) as { messages?: { id: string }[] };
     const messageId = sendResult.messages?.[0]?.id || `local_${Date.now()}`;
+
+    console.log('[whatsappSendMedia] Mensaje enviado exitosamente:', messageId);
 
     // 4. Guardar en Firestore (OUTBOUND con media)
     const now = new Date().toISOString();
@@ -145,7 +176,7 @@ export const whatsappSendMediaService = {
         mediaFileId: blob.url,
         mimeType: params.mimeType,
         sizeBytes: params.buffer.length,
-        caption: params.caption,
+        caption: mediaType !== 'audio' ? params.caption : undefined,
         fileName: params.fileName,
         metaMediaId,
       },
