@@ -1,6 +1,7 @@
 // src/app/(dashboard)/whatsapp/inbox/page.tsx
 'use client';
 
+import { convertAudioToMP3 } from '@/services/audioConverter.service';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
@@ -461,9 +462,15 @@ export default function WhatsAppInboxPage() {
   };
 
   const handleRecordedAudio = async (blob: Blob) => {
-    const fileName = `audio_${Date.now()}.ogg`;
-    const file = new File([blob], fileName, { type: blob.type });
-    await handleSendMedia(file, 'Nota de voz');
+    try {
+      const mp3Blob = await convertAudioToMP3(blob);
+      const fileName = `audio_${Date.now()}.mp3`;
+      const file = new File([mp3Blob], fileName, { type: 'audio/mpeg' });
+      await handleSendMedia(file, 'Nota de voz');
+    } catch (err) {
+      console.error('[Inbox] Error convirtiendo audio a MP3:', err);
+      setError('Error al procesar el audio. Intenta de nuevo.');
+    }
   };
 
   const handleChangeStatus = async (status: ConversationStatus) => {
