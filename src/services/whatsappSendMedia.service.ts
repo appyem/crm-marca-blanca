@@ -9,7 +9,7 @@ const META_GRAPH_API_URL = 'https://graph.facebook.com';
 export type SendableMediaType = 'image' | 'audio' | 'video' | 'document';
 
 interface MediaUploadToMetaResult {
-  metaMediaId: string;
+  id: string;
 }
 
 interface SendMediaParams {
@@ -69,7 +69,12 @@ export const whatsappSendMediaService = {
     }
 
     const uploadResult = (await uploadResponse.json()) as MediaUploadToMetaResult;
-    const metaMediaId = uploadResult.metaMediaId;
+    console.log('[whatsappSendMedia] Meta upload response:', uploadResult);
+    
+    const metaMediaId = uploadResult.id;
+    if (!metaMediaId) {
+      throw new Error('Meta no devolvió media_id en la respuesta de upload');
+    }
 
     // 3. Enviar mensaje con media_id al destinatario
     const sendBody: Record<string, unknown> = {
@@ -90,6 +95,8 @@ export const whatsappSendMediaService = {
     }
 
     sendBody[mediaType] = mediaPayload;
+
+    console.log('[whatsappSendMedia] Sending message with payload:', JSON.stringify(sendBody, null, 2));
 
     const sendResponse = await fetch(
       `${META_GRAPH_API_URL}/${META_GRAPH_API_VERSION}/${params.phoneNumberId}/messages`,
