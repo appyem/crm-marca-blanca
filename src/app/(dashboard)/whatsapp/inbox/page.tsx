@@ -10,6 +10,11 @@ import {
   WhatsAppMessage,
   ConversationStatus,
 } from '@/types/whatsappConversation.types';
+import {
+  BlockReason,
+  BLOCK_REASON_LABELS,
+  BLOCK_REASONS,
+} from '@/types/whatsappBlockedNumber.types';
 
 type StatusFilter = 'ALL' | ConversationStatus;
 
@@ -262,6 +267,11 @@ export default function WhatsAppInboxPage() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [canReplyFree, setCanReplyFree] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [blockReason, setBlockReason] = useState<BlockReason>('spam');
+  const [blockReasonDetails, setBlockReasonDetails] = useState('');
+  const [isBlocking, setIsBlocking] = useState(false);
   const selectedIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -341,6 +351,7 @@ export default function WhatsAppInboxPage() {
     setReplyText('');
     setPendingFile(null);
     setShowCaptionInput(false);
+    await checkIfBlocked(conversation.phoneNumber);
     await loadMessages(conversation.id, false);
 
     if (conversation.unreadCount > 0) {
@@ -479,6 +490,85 @@ export default function WhatsAppInboxPage() {
     }
   };
 
+  const checkIfBlocked = useCallback(async (phoneNumber: string) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+      const response = await fetch('/api/whatsapp/blocked', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const result = await response.json();
+        const normalized = phoneNumber.replace(/\D/g, '');
+        const isItBlocked = result.blockedNumbers?.some(
+          (b: { phoneNumber: string }) => b.phoneNumber === normalized
+        );
+        setIsBlocked(!!isItBlocked);
+      }
+    } catch (err) {
+      console.error('[Inbox] Error verificando bloqueo:', err);
+    }
+  }, []);
+
+  const handleBlockNumber = async () => {
+    if (!selectedConversation) return;
+    if (blockReason === 'otro' && !blockReasonDetails.trim()) {
+      setError('Si la razón es "Otro", debes especificar los detalles.');
+      return;
+    }
+    setIsBlocking(true);
+    setError(null);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Sesión expirada.');
+      const response = await fetch('/api/whatsapp/blocked', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          phoneNumber: selectedConversation.phoneNumber,
+          reason: blockReason,
+          reasonDetails: blockReasonDetails.trim() || undefined,
+          contactName: selectedConversation.contactName,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || 'Error al bloquear');
+      setIsBlocked(true);
+      setShowBlockModal(false);
+      setBlockReasonDetails('');
+    } catch (err: unknown) {
+      setError(`Error al bloquear: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
+  const handleUnblockNumber = async () => {
+    if (!selectedConversation) return;
+    if (!confirm(`¿Desbloquear a ${selectedConversation.displayPhone}?`)) return;
+    setIsBlocking(true);
+    setError(null);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Sesión expirada.');
+      const response = await fetch(
+        `/api/whatsapp/blocked/${selectedConversation.phoneNumber}`,
+        { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || 'Error al desbloquear');
+      setIsBlocked(false);
+    } catch (err: unknown) {
+      setError(`Error al desbloquear: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
   const filteredConversations = conversations
     .filter(c => filter === 'ALL' || c.status === filter)
     .filter(c => search.trim() === '' || c.contactName.toLowerCase().includes(search.toLowerCase()) || c.phoneNumber.includes(search));
@@ -584,6 +674,22 @@ export default function WhatsAppInboxPage() {
                     ) : (
                       <button onClick={() => handleChangeStatus('EN_CURSO')} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: '600', backgroundColor: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd', borderRadius: '6px', cursor: 'pointer' }}>Reabrir</button>
                     )}
+                    {isBlocked ? (
+                      <button
+                        onClick={handleUnblockNumber}
+                        disabled={isBlocking}
+                        style={{ padding: '6px 12px', fontSize: '12px', fontWeight: '600', backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5', borderRadius: '6px', cursor: isBlocking ? 'not-allowed' : 'pointer' }}
+                      >
+                        ⛔ Desbloquear
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setShowBlockModal(true)}
+                        style={{ padding: '6px 12px', fontSize: '12px', fontWeight: '600', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        🚫 Bloquear
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -656,6 +762,62 @@ export default function WhatsAppInboxPage() {
           </div>
         </div>
       </div>
+      {showBlockModal && selectedConversation && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '24px', maxWidth: '480px', width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111827', margin: '0 0 8px' }}>🚫 Bloquear número</h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 20px' }}>
+              Estás a punto de bloquear a <strong>{selectedConversation.contactName}</strong> ({selectedConversation.displayPhone}).
+              <br />Esta persona podrá seguir enviándote mensajes, pero tú no los recibirás ni verás en tu bandeja de entrada.
+            </p>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>Razón del bloqueo</label>
+              <select
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value as BlockReason)}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', color: '#111827' }}
+              >
+                {BLOCK_REASONS.map(r => (
+                  <option key={r} value={r}>{BLOCK_REASON_LABELS[r]}</option>
+                ))}
+              </select>
+            </div>
+            {blockReason === 'otro' && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>Detalles (requerido)</label>
+                <textarea
+                  value={blockReasonDetails}
+                  onChange={(e) => setBlockReasonDetails(e.target.value)}
+                  placeholder="Especifica la razón..."
+                  rows={3}
+                  style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', color: '#111827', resize: 'vertical' }}
+                />
+              </div>
+            )}
+            {error && (
+              <div style={{ marginBottom: '16px', padding: '10px', backgroundColor: '#fef2f2', color: '#b91c1c', fontSize: '13px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                {error}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowBlockModal(false); setBlockReasonDetails(''); }}
+                disabled={isBlocking}
+                style={{ padding: '8px 16px', backgroundColor: 'white', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBlockNumber}
+                disabled={isBlocking}
+                style={{ padding: '8px 16px', backgroundColor: isBlocking ? '#9ca3af' : '#dc2626', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: isBlocking ? 'not-allowed' : 'pointer' }}
+              >
+                {isBlocking ? 'Bloqueando...' : 'Confirmar bloqueo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
