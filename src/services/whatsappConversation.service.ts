@@ -58,6 +58,22 @@ function mapMessageDoc(doc: QueryDocumentSnapshot<DocumentData>): WhatsAppMessag
   };
 }
 
+/**
+ * Convierte un objeto media a un formato seguro para Firestore,
+ * reemplazando cualquier undefined por null.
+ */
+function sanitizeMedia(media: WhatsAppMessageMedia): { [key: string]: string | number | null } {
+  return {
+    type: media.type,
+    mediaFileId: media.mediaFileId ?? null,
+    mimeType: media.mimeType ?? null,
+    sizeBytes: media.sizeBytes ?? null,
+    caption: media.caption ?? null,
+    fileName: media.fileName ?? null,
+    metaMediaId: media.metaMediaId ?? null,
+  };
+}
+
 export const whatsappConversationService = {
   async upsertConversation(params: {
     tenantId: string;
@@ -164,6 +180,8 @@ export const whatsappConversationService = {
     timestamp: string;
   }): Promise<void> {
     const { db } = getFirebaseAdmin();
+
+    // Sanitizar: ningún undefined puede llegar a Firestore
     await db
       .collection('tenants')
       .doc(params.tenantId)
@@ -174,10 +192,10 @@ export const whatsappConversationService = {
         direction: params.direction,
         messageType: params.messageType,
         text: params.text,
-        metaMessageId: params.metaMessageId || null,
-        status: params.status || null,
-        templateName: params.templateName || null,
-        media: params.media || null,
+        metaMessageId: params.metaMessageId ?? null,
+        status: params.status ?? null,
+        templateName: params.templateName ?? null,
+        media: params.media ? sanitizeMedia(params.media) : null,
         timestamp: params.timestamp,
         createdAt: new Date().toISOString(),
       });
