@@ -15,6 +15,8 @@ import { EmailTemplate } from '@/types/email.types';
 import { WhatsAppTemplate } from '@/types/whatsappTemplate.types';
 import { ContactList } from '@/types/contactList.types';
 
+type CampaignMode = 'manual' | 'list';
+
 export default function ContactsPage() {
   return (
     <Suspense fallback={
@@ -64,6 +66,12 @@ function ContactsPageContent() {
   const [isAddToListModalOpen, setIsAddToListModalOpen] = useState(false);
   const [targetListId, setTargetListId] = useState<string>('');
   const [isAddingToList, setIsAddingToList] = useState(false);
+
+  // Estados para modo de campaña (manual o listado)
+  const [emailCampaignMode, setEmailCampaignMode] = useState<CampaignMode>('manual');
+  const [emailCampaignListId, setEmailCampaignListId] = useState<string>('');
+  const [whatsAppCampaignMode, setWhatsAppCampaignMode] = useState<CampaignMode>('manual');
+  const [whatsAppCampaignListId, setWhatsAppCampaignListId] = useState<string>('');
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -276,8 +284,7 @@ function ContactsPageContent() {
     try {
       const parsed = await importService.parseExcelFile(file);
       setParsedContacts(parsed);
-      
-      // Auto-sugerir nombre de listado basado en el nombre del archivo
+
       const fileName = file.name.replace(/\.(xlsx|xls|csv)$/i, '');
       setCreateNewListName(fileName);
     } catch (err) {
@@ -316,7 +323,6 @@ function ContactsPageContent() {
     let failedCount = 0;
     const createdContactIds: string[] = [];
 
-    // Si se va a crear un nuevo listado, crearlo primero
     let finalListId = importListId;
     if (!importListId && createNewListName.trim()) {
       try {
@@ -364,8 +370,8 @@ function ContactsPageContent() {
             })
           )
         );
-        
-        results.forEach((r, idx) => {
+
+        results.forEach((r) => {
           if (r.status === 'fulfilled') {
             successCount++;
             createdContactIds.push(r.value);
@@ -373,11 +379,10 @@ function ContactsPageContent() {
             failedCount++;
           }
         });
-        
+
         setImportProgress(Math.min(i + chunkSize, validContacts.length));
       }
 
-      // Si hay un listado seleccionado o creado, agregar los contactos
       if (finalListId && createdContactIds.length > 0) {
         try {
           const token = await auth.currentUser?.getIdToken();
@@ -427,26 +432,62 @@ function ContactsPageContent() {
   };
 
   const openCampaignModal = () => {
-    if (selectedContactIds.size === 0) {
-      setError('Por favor selecciona al menos un contacto.');
-      return;
-    }
-
-    if (selectedContactIds.size > 100) {
-      setError('⚠️ Límite excedido: Tu plan actual permite un máximo de 100 contactos por envío. Por favor, reduce la selección.');
-      return;
-    }
-
     if (templates.length === 0) {
       setError('No hay plantillas disponibles. Crea una en la sección de Email.');
       return;
     }
+
+    // Determinar modo por defecto
+    if (selectedContactIds.size > 0) {
+      setEmailCampaignMode('manual');
+    } else if (contactLists.length > 0) {
+      setEmailCampaignMode('list');
+      setEmailCampaignListId(contactLists[0].id);
+    } else {
+      setError('No hay contactos seleccionados ni listados disponibles.');
+      return;
+    }
+
     setSelectedTemplateId(templates[0].id);
     setIsCampaignModalOpen(true);
   };
 
   const handleSendCampaign = async () => {
-    if (!user || selectedContactIds.size === 0 || !selectedTemplateId) return;
+    if (!user || !selectedTemplateId) return;
+
+    // Determinar contactos destino según el modo
+    let targetContactIds: string[] = [];
+    if (emailCampaignMode === 'manual') {
+      targetContactIds = Array.from(selectedContactIds);
+    } else {
+      if (!emailCampaignListId) {
+        setError('Selecciona un listado.');
+        return;
+      }
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) throw new Error('Sesión expirada.');
+        const response = await fetch(`/api/contact-lists/${emailCampaignListId}/contacts`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error('Error al obtener contactos del listado');
+        targetContactIds = result.contactIds;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error al obtener listado');
+        return;
+      }
+    }
+
+    if (targetContactIds.length === 0) {
+      setError('No hay contactos para enviar.');
+      return;
+    }
+
+    if (targetContactIds.length > 100) {
+      setError(`⚠️ Límite excedido: Tu plan permite máximo 100 correos por envío. Seleccionaste ${targetContactIds.length}.`);
+      return;
+    }
 
     setIsSendingCampaign(true);
     setError(null);
@@ -458,9 +499,9 @@ function ContactsPageContent() {
       const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
       if (!selectedTemplate) throw new Error('Plantilla no encontrada.');
 
-      const selectedContacts = contacts.filter(c => selectedContactIds.has(c.id) && c.email);
+      const targetContacts = contacts.filter(c => targetContactIds.includes(c.id) && c.email);
 
-      const recipients = selectedContacts.map(contact => ({
+      const recipients = targetContacts.map(contact => ({
         to: contact.email!,
         variables: {
           nombre: contact.firstName || 'Cliente',
@@ -508,33 +549,64 @@ function ContactsPageContent() {
   };
 
   const openWhatsAppCampaignModal = () => {
-    if (selectedContactIds.size === 0) {
-      setError('Por favor selecciona al menos un contacto.');
+    if (whatsAppTemplates.length === 0) {
+      setError('No hay plantillas aprobadas de WhatsApp. Sincroniza con Meta primero.');
       return;
     }
 
-    const contactsWithPhone = contacts.filter(c => selectedContactIds.has(c.id) && c.phone);
-
-    if (contactsWithPhone.length === 0) {
-      setError('Ninguno de los contactos seleccionados tiene teléfono registrado.');
-      return;
-    }
-
-    if (contactsWithPhone.length > 50) {
-      setError(`⚠️ Límite excedido: WhatsApp permite máximo 50 contactos por campaña. Seleccionaste ${contactsWithPhone.length}.`);
-      return;
-    }
-
-    if (whatsAppTemplates.length > 0) {
-      setWhatsAppCampaignMessage(whatsAppTemplates[0].name);
+    // Determinar modo por defecto
+    if (selectedContactIds.size > 0) {
+      setWhatsAppCampaignMode('manual');
+    } else if (contactLists.length > 0) {
+      setWhatsAppCampaignMode('list');
+      setWhatsAppCampaignListId(contactLists[0].id);
     } else {
-      setWhatsAppCampaignMessage('');
+      setError('No hay contactos seleccionados ni listados disponibles.');
+      return;
     }
+
+    setWhatsAppCampaignMessage(whatsAppTemplates[0].name);
     setIsWhatsAppCampaignModalOpen(true);
   };
 
   const handleSendWhatsAppCampaign = async () => {
-    if (!user || selectedContactIds.size === 0 || !whatsAppCampaignMessage.trim()) return;
+    if (!user || !whatsAppCampaignMessage.trim()) return;
+
+    // Determinar contactos destino según el modo
+    let targetContactIds: string[] = [];
+    if (whatsAppCampaignMode === 'manual') {
+      targetContactIds = Array.from(selectedContactIds);
+    } else {
+      if (!whatsAppCampaignListId) {
+        setError('Selecciona un listado.');
+        return;
+      }
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) throw new Error('Sesión expirada.');
+        const response = await fetch(`/api/contact-lists/${whatsAppCampaignListId}/contacts`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error('Error al obtener contactos del listado');
+        targetContactIds = result.contactIds;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error al obtener listado');
+        return;
+      }
+    }
+
+    const contactsWithPhone = contacts.filter(c => targetContactIds.includes(c.id) && c.phone);
+
+    if (contactsWithPhone.length === 0) {
+      setError('Ninguno de los contactos destino tiene teléfono registrado.');
+      return;
+    }
+
+    if (contactsWithPhone.length > 50) {
+      setError(`⚠️ Límite excedido: WhatsApp permite máximo 50 contactos por campaña. Destino tiene ${contactsWithPhone.length} con teléfono.`);
+      return;
+    }
 
     setIsSendingWhatsAppCampaign(true);
     setError(null);
@@ -542,8 +614,6 @@ function ContactsPageContent() {
     try {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error('Sesión expirada.');
-
-      const contactsWithPhone = contacts.filter(c => selectedContactIds.has(c.id) && c.phone);
 
       let successCount = 0;
       let failedCount = 0;
@@ -727,30 +797,47 @@ function ContactsPageContent() {
               Importar Excel
             </button>
 
-            <button type="button" onClick={openCampaignModal} disabled={selectedContactIds.size === 0} style={{ backgroundColor: selectedContactIds.size > 0 ? '#10b981' : '#9ca3af', color: 'white', padding: '12px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-              Enviar Campaña Email ({selectedContactIds.size})
-            </button>
-
             <button
               type="button"
-              onClick={openWhatsAppCampaignModal}
-              disabled={selectedContactIds.size === 0}
+              onClick={openCampaignModal}
+              disabled={selectedContactIds.size === 0 && contactLists.length === 0}
               style={{
-                backgroundColor: selectedContactIds.size > 0 ? '#25D366' : '#9ca3af',
+                backgroundColor: (selectedContactIds.size > 0 || contactLists.length > 0) ? '#10b981' : '#9ca3af',
                 color: 'white',
                 padding: '12px 24px',
                 borderRadius: '6px',
                 fontSize: '14px',
                 fontWeight: '600',
                 border: 'none',
-                cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed',
+                cursor: (selectedContactIds.size > 0 || contactLists.length > 0) ? 'pointer' : 'not-allowed',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '8px'
               }}
             >
-              📱 Enviar Campaña WhatsApp ({selectedContactIds.size})
+              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+              Enviar Campaña Email{selectedContactIds.size > 0 ? ` (${selectedContactIds.size})` : ''}
+            </button>
+
+            <button
+              type="button"
+              onClick={openWhatsAppCampaignModal}
+              disabled={selectedContactIds.size === 0 && contactLists.length === 0}
+              style={{
+                backgroundColor: (selectedContactIds.size > 0 || contactLists.length > 0) ? '#25D366' : '#9ca3af',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '600',
+                border: 'none',
+                cursor: (selectedContactIds.size > 0 || contactLists.length > 0) ? 'pointer' : 'not-allowed',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              📱 Enviar Campaña WhatsApp{selectedContactIds.size > 0 ? ` (${selectedContactIds.size})` : ''}
             </button>
 
             <button
@@ -1011,6 +1098,40 @@ function ContactsPageContent() {
                     )}
                   </div>
 
+                  {/* Selector de listado */}
+                  <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f5f3ff', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
+                    <p style={{ fontSize: '13px', fontWeight: '600', color: '#5b21b6', margin: '0 0 8px' }}>
+                      📋 Asignar a listado (opcional)
+                    </p>
+                    <div style={{ marginBottom: '8px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Listado existente:</label>
+                      <select
+                        value={importListId}
+                        onChange={e => setImportListId(e.target.value)}
+                        disabled={isImporting}
+                        style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#111827' }}
+                      >
+                        <option value="">-- Sin listado (solo importar) --</option>
+                        {contactLists.map(list => (
+                          <option key={list.id} value={list.id}>
+                            {list.name} ({list.contactCount} contactos)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>O crear nuevo listado con nombre:</label>
+                      <input
+                        type="text"
+                        value={createNewListName}
+                        onChange={e => setCreateNewListName(e.target.value)}
+                        disabled={isImporting}
+                        placeholder="Ej: Alcaldías Norte"
+                        style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', color: '#111827' }}
+                      />
+                    </div>
+                  </div>
+
                   {isImporting && (
                     <div style={{ marginBottom: '12px' }}>
                       <div style={{ height: '8px', backgroundColor: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
@@ -1040,21 +1161,105 @@ function ContactsPageContent() {
         {/* MODAL: ENVIAR CAMPAÑA EMAIL */}
         {isCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
-            <div style={{ width: '100%', maxWidth: '500px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
+            <div style={{ width: '100%', maxWidth: '540px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
-                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>Enviar Campaña Masiva</h2>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>Enviar Campaña de Email</h2>
                 <button onClick={() => setIsCampaignModalOpen(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
               </div>
 
-              <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px', border: '1px solid #bae6fd' }}>
-                <p style={{ fontSize: '14px', color: '#0369a1', margin: 0 }}>
-                  Vas a enviar un correo a <strong>{selectedContactIds.size} contacto(s)</strong> seleccionado(s).
-                </p>
+              {/* Selector de destinatarios */}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#111827', marginBottom: '10px' }}>
+                  📬 Destinatarios
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '12px',
+                      border: `2px solid ${emailCampaignMode === 'manual' ? '#10b981' : '#e5e7eb'}`,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      backgroundColor: emailCampaignMode === 'manual' ? '#f0fdf4' : 'white',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      checked={emailCampaignMode === 'manual'}
+                      onChange={() => setEmailCampaignMode('manual')}
+                      style={{ width: '18px', height: '18px', accentColor: '#10b981' }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', color: '#111827', margin: 0 }}>
+                        Contactos seleccionados ({selectedContactIds.size})
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>
+                        {selectedContactIds.size > 0 ? 'Enviar a los contactos que marcaste' : 'No hay contactos seleccionados'}
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '12px',
+                      border: `2px solid ${emailCampaignMode === 'list' ? '#10b981' : '#e5e7eb'}`,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      backgroundColor: emailCampaignMode === 'list' ? '#f0fdf4' : 'white',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      checked={emailCampaignMode === 'list'}
+                      onChange={() => setEmailCampaignMode('list')}
+                      style={{ width: '18px', height: '18px', accentColor: '#10b981' }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', color: '#111827', margin: 0 }}>
+                        Enviar a listado completo
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>
+                        {contactLists.length > 0 ? 'Selecciona un listado con todos sus contactos' : 'No hay listados disponibles'}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {emailCampaignMode === 'list' && contactLists.length > 0 && (
+                  <select
+                    value={emailCampaignListId}
+                    onChange={e => setEmailCampaignListId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      marginTop: '10px',
+                      padding: '10px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: '#ffffff',
+                      color: '#111827',
+                    }}
+                  >
+                    {contactLists.map(list => (
+                      <option key={list.id} value={list.id}>
+                        {list.name} ({list.contactCount} contactos)
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
+              {/* Selector de plantilla */}
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Selecciona la Plantilla</label>
-                <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)} style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#111827', marginBottom: '6px' }}>
+                  📄 Plantilla
+                </label>
+                <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)} style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }}>
                   {templates.map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
@@ -1063,7 +1268,21 @@ function ContactsPageContent() {
 
               <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
                 <button type="button" onClick={() => setIsCampaignModalOpen(false)} style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}>Cancelar</button>
-                <button type="button" onClick={handleSendCampaign} disabled={isSendingCampaign} style={{ padding: '8px 16px', backgroundColor: isSendingCampaign ? '#93c5fd' : '#10b981', color: 'white', border: 'none',borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isSendingCampaign ? 'not-allowed' : 'pointer' }}>
+                <button
+                  type="button"
+                  onClick={handleSendCampaign}
+                  disabled={isSendingCampaign || (emailCampaignMode === 'manual' && selectedContactIds.size === 0) || (emailCampaignMode === 'list' && !emailCampaignListId)}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: isSendingCampaign ? '#93c5fd' : '#10b981',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    cursor: isSendingCampaign ? 'not-allowed' : 'pointer',
+                  }}
+                >
                   {isSendingCampaign ? 'Enviando...' : 'Confirmar y Enviar'}
                 </button>
               </div>
@@ -1074,7 +1293,7 @@ function ContactsPageContent() {
         {/* MODAL: CAMPAÑA WHATSAPP MASIVA */}
         {isWhatsAppCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
-            <div style={{ width: '100%', maxWidth: '600px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ width: '100%', maxWidth: '640px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
                 <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   📱 Enviar Campaña WhatsApp
@@ -1087,12 +1306,94 @@ function ContactsPageContent() {
                 </button>
               </div>
 
-              <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#dcfce7', borderRadius: '6px', border: '1px solid #86efac' }}>
-                <p style={{ fontSize: '14px', color: '#166534', margin: 0 }}>
-                  Vas a enviar un mensaje de WhatsApp a <strong>{contacts.filter(c => selectedContactIds.has(c.id) && c.phone).length} contacto(s)</strong> usando una plantilla aprobada por Meta.
-                </p>
+              {/* Selector de destinatarios */}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#111827', marginBottom: '10px' }}>
+                  📬 Destinatarios
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '12px',
+                      border: `2px solid ${whatsAppCampaignMode === 'manual' ? '#25D366' : '#e5e7eb'}`,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      backgroundColor: whatsAppCampaignMode === 'manual' ? '#dcfce7' : 'white',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      checked={whatsAppCampaignMode === 'manual'}
+                      onChange={() => setWhatsAppCampaignMode('manual')}
+                      style={{ width: '18px', height: '18px', accentColor: '#25D366' }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', color: '#111827', margin: 0 }}>
+                        Contactos seleccionados ({selectedContactIds.size})
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>
+                        {selectedContactIds.size > 0 ? 'Enviar a los contactos que marcaste' : 'No hay contactos seleccionados'}
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '12px',
+                      border: `2px solid ${whatsAppCampaignMode === 'list' ? '#25D366' : '#e5e7eb'}`,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      backgroundColor: whatsAppCampaignMode === 'list' ? '#dcfce7' : 'white',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      checked={whatsAppCampaignMode === 'list'}
+                      onChange={() => setWhatsAppCampaignMode('list')}
+                      style={{ width: '18px', height: '18px', accentColor: '#25D366' }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', color: '#111827', margin: 0 }}>
+                        Enviar a listado completo
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>
+                        {contactLists.length > 0 ? 'Selecciona un listado (máx 50 con teléfono)' : 'No hay listados disponibles'}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {whatsAppCampaignMode === 'list' && contactLists.length > 0 && (
+                  <select
+                    value={whatsAppCampaignListId}
+                    onChange={e => setWhatsAppCampaignListId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      marginTop: '10px',
+                      padding: '10px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: '#ffffff',
+                      color: '#111827',
+                    }}
+                  >
+                    {contactLists.map(list => (
+                      <option key={list.id} value={list.id}>
+                        {list.name} ({list.contactCount} contactos)
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
+              {/* Selector de plantilla */}
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
                   Plantilla a usar
@@ -1234,7 +1535,7 @@ function ContactsPageContent() {
                 <button
                   type="button"
                   onClick={handleSendWhatsAppCampaign}
-                  disabled={isSendingWhatsAppCampaign || !whatsAppCampaignMessage}
+                  disabled={isSendingWhatsAppCampaign || !whatsAppCampaignMessage || (whatsAppCampaignMode === 'manual' && selectedContactIds.size === 0) || (whatsAppCampaignMode === 'list' && !whatsAppCampaignListId)}
                   style={{
                     padding: '8px 16px',
                     backgroundColor: isSendingWhatsAppCampaign || !whatsAppCampaignMessage ? '#9ca3af' : '#25D366',
