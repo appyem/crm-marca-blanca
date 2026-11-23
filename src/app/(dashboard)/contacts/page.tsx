@@ -49,6 +49,8 @@ function ContactsPageContent() {
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
+  const [importListId, setImportListId] = useState<string>('');
+  const [createNewListName, setCreateNewListName] = useState<string>('');
 
   const [isWhatsAppCampaignModalOpen, setIsWhatsAppCampaignModalOpen] = useState(false);
   const [whatsAppCampaignMessage, setWhatsAppCampaignMessage] = useState('');
@@ -261,6 +263,8 @@ function ContactsPageContent() {
   const openImportModal = () => {
     setParsedContacts([]);
     setImportProgress(0);
+    setImportListId('');
+    setCreateNewListName('');
     setIsImportModalOpen(true);
   };
 
@@ -272,6 +276,10 @@ function ContactsPageContent() {
     try {
       const parsed = await importService.parseExcelFile(file);
       setParsedContacts(parsed);
+      
+      // Auto-sugerir nombre de listado basado en el nombre del archivo
+      const fileName = file.name.replace(/\.(xlsx|xls|csv)$/i, '');
+      setCreateNewListName(fileName);
     } catch (err) {
       setError('No se pudo leer el archivo. Verifica que sea un Excel o CSV válido.');
       console.error(err);
@@ -306,6 +314,35 @@ function ContactsPageContent() {
     setImportProgress(0);
     let successCount = 0;
     let failedCount = 0;
+    const createdContactIds: string[] = [];
+
+    // Si se va a crear un nuevo listado, crearlo primero
+    let finalListId = importListId;
+    if (!importListId && createNewListName.trim()) {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) throw new Error('Sesión expirada.');
+
+        const createListResponse = await fetch('/api/contact-lists', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name: createNewListName.trim(),
+            color: '#25D366',
+          }),
+        });
+
+        const listResult = await createListResponse.json();
+        if (createListResponse.ok && listResult.success) {
+          finalListId = listResult.listId;
+        }
+      } catch (err) {
+        console.error('Error creando listado:', err);
+      }
+    }
 
     try {
       const chunkSize = 10;
@@ -327,14 +364,45 @@ function ContactsPageContent() {
             })
           )
         );
-        results.forEach(r => (r.status === 'fulfilled' ? successCount++ : failedCount++));
+        
+        results.forEach((r, idx) => {
+          if (r.status === 'fulfilled') {
+            successCount++;
+            createdContactIds.push(r.value);
+          } else {
+            failedCount++;
+          }
+        });
+        
         setImportProgress(Math.min(i + chunkSize, validContacts.length));
       }
 
-      alert(`✅ Importación completada.\nExitosos: ${successCount}\nFallidos: ${failedCount}`);
+      // Si hay un listado seleccionado o creado, agregar los contactos
+      if (finalListId && createdContactIds.length > 0) {
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          if (token) {
+            await fetch(`/api/contact-lists/${finalListId}/contacts`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+              },
+              body: JSON.stringify({ contactIds: createdContactIds }),
+            });
+          }
+        } catch (err) {
+          console.error('Error agregando contactos al listado:', err);
+        }
+      }
+
+      alert(`✅ Importación completada.\nExitosos: ${successCount}\nFallidos: ${failedCount}${finalListId ? `\nAgregados al listado: ${createdContactIds.length}` : ''}`);
       setIsImportModalOpen(false);
       setParsedContacts([]);
+      setImportListId('');
+      setCreateNewListName('');
       await loadData();
+      await loadContactLists();
     } catch (err) {
       setError('Error durante la importación.');
       console.error(err);
@@ -939,7 +1007,7 @@ function ContactsPageContent() {
                       </tbody>
                     </table>
                     {parsedContacts.length > 8 && (
-                      <p style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7280', margin: 0 }}>... y {parsedContacts.length - 8} filas más.</p>
+                      <p style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7280', margin: '0' }}>... y {parsedContacts.length - 8} filas más.</p>
                     )}
                   </div>
 
