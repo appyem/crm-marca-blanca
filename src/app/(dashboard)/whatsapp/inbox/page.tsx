@@ -532,7 +532,7 @@ export default function WhatsAppInboxPage() {
           ))}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '16px', minHeight: '70vh' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '16px', height: 'calc(100vh - 220px)', minHeight: '600px' }}>
           <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
               <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar por nombre o número..." style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', color: '#111827' }} />
@@ -565,7 +565,7 @@ export default function WhatsAppInboxPage() {
             </div>
           </div>
 
-          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             {!selectedConversation ? (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#9ca3af' }}>
                 <span style={{ fontSize: '48px', marginBottom: '12px' }}>💬</span>
