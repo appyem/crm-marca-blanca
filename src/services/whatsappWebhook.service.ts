@@ -172,9 +172,15 @@ export const whatsappWebhookService = {
         }
       }
 
-      if (value.errors && value.errors.length > 0) {
+            if (value.errors && value.errors.length > 0) {
         for (const error of value.errors) {
           try {
+            console.error('[Webhook] Meta envió error:', {
+              code: error.code,
+              title: error.title,
+              message: error.message,
+              details: error.error_data?.details,
+            });
             await this.saveErrorEvent(tenantId, value, error);
             result.processed++;
           } catch (err) {
@@ -184,6 +190,7 @@ export const whatsappWebhookService = {
           }
         }
       }
+
     }
 
     return result;
