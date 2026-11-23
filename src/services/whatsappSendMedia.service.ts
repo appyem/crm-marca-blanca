@@ -8,9 +8,7 @@ const META_GRAPH_API_URL = 'https://graph.facebook.com';
 
 export type SendableMediaType = 'image' | 'audio' | 'video' | 'document';
 
-interface MediaUploadToMetaResult {
-  id: string;
-}
+interface MediaUploadToMetaResult { id: string; }
 
 interface SendMediaParams {
   tenantId: string;
@@ -24,65 +22,59 @@ interface SendMediaParams {
   conversationId: string;
 }
 
-const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB
+const MAX_FILE_SIZE = 16 * 1024 * 1024;
 
 /**
- * Limpia el MIME type para enviar a Meta.
- * Meta no acepta MIME types con parámetros como ";codecs=opus"
- * Ejemplo: "audio/ogg;codecs=opus" → "audio/ogg"
+ * WhatsApp acepta estos formatos de audio:
+ * - audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg, audio/opus
+ * 
+ * Los navegadores modernos graban en webm/opus o mp4/opus.
+ * WhatsApp NO acepta webm directamente, pero sí opus dentro de ogg.
+ * Solución: re-etiquetar webm/mp4 como audio/ogg (el codec Opus es el mismo).
  */
-function cleanMimeTypeForMeta(rawMimeType: string, mediaType: SendableMediaType): string {
-  // Quitar parámetros después del punto y coma
+function getMetaCompatibleMimeType(rawMimeType: string, mediaType: SendableMediaType): string {
   const baseMime = rawMimeType.split(';')[0].trim().toLowerCase();
   
-  // Mapeo de MIME types compatibles con WhatsApp
   if (mediaType === 'audio') {
-    // WhatsApp acepta: audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg, audio/opus
-    if (baseMime === 'audio/ogg' || baseMime === 'audio/opus') {
+    // WhatsApp NO acepta audio/webm ni audio/mp4 inválido
+    // Los audios grabados en webm/mp4 en realidad usan codec Opus, 
+    // que WhatsApp SÍ acepta dentro de contenedor OGG
+    if (
+      baseMime === 'audio/webm' ||
+      baseMime === 'audio/mp4' ||
+      baseMime === 'audio/m4a' ||
+      baseMime === 'audio/x-m4a' ||
+      baseMime.startsWith('audio/webm') ||
+      baseMime.startsWith('audio/mp4')
+    ) {
       return 'audio/ogg';
     }
-    if (baseMime === 'audio/mp4' || baseMime === 'audio/m4a') {
-      return 'audio/mp4';
+    // Formatos ya compatibles
+    if (['audio/ogg', 'audio/opus', 'audio/aac', 'audio/mpeg', 'audio/amr'].includes(baseMime)) {
+      return baseMime;
     }
-    if (baseMime === 'audio/mpeg' || baseMime === 'audio/mp3') {
-      return 'audio/mpeg';
-    }
-    if (baseMime === 'audio/aac') {
-      return 'audio/aac';
-    }
-    if (baseMime === 'audio/amr') {
-      return 'audio/amr';
-    }
-    // Fallback para formatos no estándar
-    console.warn(`[whatsappSendMedia] MIME de audio no estándar: ${baseMime}. Usando audio/ogg como fallback.`);
+    // Fallback: asumir OGG (mejor que rechazar)
+    console.warn(`[whatsappSendMedia] MIME de audio desconocido: ${baseMime}, usando audio/ogg`);
     return 'audio/ogg';
   }
   
   if (mediaType === 'video') {
-    if (baseMime === 'video/mp4') return 'video/mp4';
-    if (baseMime === 'video/3gpp') return 'video/3gpp';
+    if (baseMime === 'video/mp4' || baseMime === 'video/3gpp') return baseMime;
     return 'video/mp4';
   }
   
   if (mediaType === 'image') {
-    if (baseMime === 'image/jpeg') return 'image/jpeg';
-    if (baseMime === 'image/png') return 'image/png';
-    if (baseMime === 'image/webp') return 'image/webp';
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(baseMime)) return baseMime;
     return baseMime;
   }
   
-  // Documento: usar MIME tal cual
   return baseMime;
 }
 
-/**
- * Asegura que la extensión del archivo coincida con el MIME type limpio
- */
-function getFileNameWithCorrectExtension(fileName: string, cleanMime: string): string {
+function getCorrectedFileName(fileName: string, metaMime: string): string {
   const extMap: Record<string, string> = {
     'audio/ogg': '.ogg',
     'audio/opus': '.opus',
-    'audio/mp4': '.m4a',
     'audio/mpeg': '.mp3',
     'audio/aac': '.aac',
     'audio/amr': '.amr',
@@ -92,11 +84,8 @@ function getFileNameWithCorrectExtension(fileName: string, cleanMime: string): s
     'image/png': '.png',
     'image/webp': '.webp',
   };
-  
-  const newExt = extMap[cleanMime];
+  const newExt = extMap[metaMime];
   if (!newExt) return fileName;
-  
-  // Quitar extensión existente
   const lastDot = fileName.lastIndexOf('.');
   const baseName = lastDot > 0 ? fileName.slice(0, lastDot) : fileName;
   return `${baseName}${newExt}`;
@@ -107,45 +96,39 @@ export const whatsappSendMediaService = {
     const token = process.env.WHATSAPP_TOKEN;
     if (!token) throw new Error('WHATSAPP_TOKEN no está configurado.');
 
-    // Limpiar MIME type y corregir extensión del archivo
-    const cleanMime = cleanMimeTypeForMeta(params.mimeType, params.mediaType);
-    const correctedFileName = getFileNameWithCorrectExtension(params.fileName, cleanMime);
+    const metaMime = getMetaCompatibleMimeType(params.mimeType, params.mediaType);
+    const correctedFileName = getCorrectedFileName(params.fileName, metaMime);
 
     console.log('[whatsappSendMedia] Iniciando envío:', {
       to: params.to,
       mediaType: params.mediaType,
       originalMimeType: params.mimeType,
-      cleanMimeType: cleanMime,
+      metaMimeType: metaMime,
       originalFileName: params.fileName,
       correctedFileName,
       fileSize: params.buffer.length,
-      hasCaption: !!params.caption,
     });
 
     if (params.buffer.length > MAX_FILE_SIZE) {
       throw new Error(`El archivo es muy grande (${(params.buffer.length / 1024 / 1024).toFixed(1)}MB). Máximo ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
     }
 
-    // 1. Subir a Vercel Blob (historial permanente)
+    // 1. Subir a Vercel Blob (historial)
     const blobPathname = `whatsapp/${params.tenantId}/out_${Date.now()}_${correctedFileName}`;
     const blob = await put(blobPathname, params.buffer, {
       access: 'public',
-      contentType: cleanMime,
+      contentType: metaMime,
     });
 
-    console.log('[whatsappSendMedia] Archivo subido a Blob:', blob.url);
-
-    // 2. Subir a Meta Cloud API para obtener media_id
+    // 2. Subir a Meta con MIME compatible
     const metaFormData = new FormData();
     metaFormData.append('messaging_product', 'whatsapp');
-    metaFormData.append('type', cleanMime);
+    metaFormData.append('type', metaMime);
     metaFormData.append(
       'file',
-      new Blob([new Uint8Array(params.buffer)], { type: cleanMime }),
+      new Blob([new Uint8Array(params.buffer)], { type: metaMime }),
       correctedFileName
     );
-
-    console.log('[whatsappSendMedia] Subiendo a Meta con MIME:', cleanMime);
 
     const uploadResponse = await fetch(
       `${META_GRAPH_API_URL}/${META_GRAPH_API_VERSION}/${params.phoneNumberId}/media`,
@@ -158,19 +141,14 @@ export const whatsappSendMediaService = {
 
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
-      console.error('[whatsappSendMedia] Error en upload a Meta:', errorText);
       throw new Error(`Meta rechazó el archivo (${uploadResponse.status}): ${errorText}`);
     }
 
     const uploadResult = (await uploadResponse.json()) as MediaUploadToMetaResult;
-    console.log('[whatsappSendMedia] Meta upload response:', uploadResult);
-
     const metaMediaId = uploadResult.id;
-    if (!metaMediaId) {
-      throw new Error('Meta no devolvió media_id en la respuesta de upload');
-    }
+    if (!metaMediaId) throw new Error('Meta no devolvió media_id');
 
-    // 3. Enviar mensaje con media_id al destinatario
+    // 3. Enviar mensaje
     const sendBody: Record<string, unknown> = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -178,21 +156,14 @@ export const whatsappSendMediaService = {
       type: params.mediaType,
     };
 
-    const mediaPayload: { id: string; caption?: string; filename?: string } = {
-      id: metaMediaId,
-    };
-
+    const mediaPayload: { id: string; caption?: string; filename?: string } = { id: metaMediaId };
     if (params.mediaType !== 'audio' && params.caption && params.caption.trim().length > 0) {
       mediaPayload.caption = params.caption.trim();
     }
-
     if (params.mediaType === 'document') {
       mediaPayload.filename = correctedFileName;
     }
-
     sendBody[params.mediaType] = mediaPayload;
-
-    console.log('[whatsappSendMedia] Enviando mensaje a Meta:', JSON.stringify(sendBody, null, 2));
 
     const sendResponse = await fetch(
       `${META_GRAPH_API_URL}/${META_GRAPH_API_VERSION}/${params.phoneNumberId}/messages`,
@@ -208,20 +179,15 @@ export const whatsappSendMediaService = {
 
     if (!sendResponse.ok) {
       const errorText = await sendResponse.text();
-      console.error('[whatsappSendMedia] Error en envío a Meta:', errorText);
       throw new Error(`Meta rechazó el envío (${sendResponse.status}): ${errorText}`);
     }
 
     const sendResult = (await sendResponse.json()) as { messages?: { id: string }[] };
     const messageId = sendResult.messages?.[0]?.id || `local_${Date.now()}`;
 
-    console.log('[whatsappSendMedia] Mensaje enviado exitosamente:', messageId);
-
-    // 4. Guardar en Firestore (OUTBOUND con media)
+    // 4. Guardar en Firestore
     const now = new Date().toISOString();
-    const textForConversation = params.caption
-      ? params.caption
-      : `[${params.mediaType === 'image' ? 'Imagen' : params.mediaType === 'audio' ? 'Audio' : params.mediaType === 'video' ? 'Video' : 'Documento'} enviado]`;
+    const textForConversation = params.caption || `[${params.mediaType === 'image' ? 'Imagen' : params.mediaType === 'audio' ? 'Audio' : params.mediaType === 'video' ? 'Video' : 'Documento'} enviado]`;
 
     await whatsappConversationService.upsertConversation({
       tenantId: params.tenantId,
@@ -242,7 +208,7 @@ export const whatsappSendMediaService = {
       media: {
         type: params.mediaType,
         mediaFileId: blob.url,
-        mimeType: cleanMime,
+        mimeType: metaMime,
         sizeBytes: params.buffer.length,
         caption: params.mediaType !== 'audio' ? params.caption : undefined,
         fileName: correctedFileName,

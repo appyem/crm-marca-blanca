@@ -24,42 +24,25 @@ const WEBHOOK_EVENTS_COLLECTION = 'whatsappWebhookEvents';
 
 function extractMessageText(message: WebhookIncomingMessage): string {
   switch (message.type) {
-    case 'text':
-      return message.text?.body || '';
+    case 'text': return message.text?.body || '';
     case 'interactive':
-      if (message.interactive?.type === 'button_reply') {
-        return `[Botón] ${message.interactive.button_reply?.title || ''}`;
-      }
-      if (message.interactive?.type === 'list_reply') {
-        return `[Lista] ${message.interactive.list_reply?.title || ''}`;
-      }
+      if (message.interactive?.type === 'button_reply') return `[Botón] ${message.interactive.button_reply?.title || ''}`;
+      if (message.interactive?.type === 'list_reply') return `[Lista] ${message.interactive.list_reply?.title || ''}`;
       return '[Mensaje interactivo]';
-    case 'button':
-      return `[Botón] ${message.button?.text || ''}`;
-    case 'image':
-      return message.image?.caption || '[Imagen recibida]';
-    case 'video':
-      return message.video?.caption || '[Video recibido]';
-    case 'audio':
-      return '[Audio de voz recibido]';
-    case 'document':
-      return `[Documento] ${message.document?.filename || 'recibido'}`;
-    case 'location':
-      return '[Ubicación recibida]';
-    case 'contacts':
-      return '[Contacto compartido]';
-    case 'reaction':
-      return '[Reacción]';
-    case 'unsupported':
-      return '[Tipo de mensaje no soportado]';
-    default:
-      return '';
+    case 'button': return `[Botón] ${message.button?.text || ''}`;
+    case 'image': return message.image?.caption || '[Imagen recibida]';
+    case 'video': return message.video?.caption || '[Video recibido]';
+    case 'audio': return '[Audio de voz recibido]';
+    case 'document': return `[Documento] ${message.document?.filename || 'recibido'}`;
+    case 'location': return '[Ubicación recibida]';
+    case 'contacts': return '[Contacto compartido]';
+    case 'reaction': return '[Reacción]';
+    case 'unsupported': return '[Tipo de mensaje no soportado]';
+    default: return '';
   }
 }
 
-function getMediaPayload(
-  message: WebhookIncomingMessage
-): { payload: WebhookMediaPayload; type: WhatsAppMediaType } | null {
+function getMediaPayload(message: WebhookIncomingMessage): { payload: WebhookMediaPayload; type: WhatsAppMediaType } | null {
   if (message.image) return { payload: message.image, type: 'image' };
   if (message.audio) return { payload: message.audio, type: 'audio' };
   if (message.video) return { payload: message.video, type: 'video' };
@@ -70,20 +53,27 @@ function getMediaPayload(
 async function findTenantByPhoneNumber(phoneNumberId: string): Promise<string | null> {
   const { db } = getFirebaseAdmin();
   const tenantsSnapshot = await db.collection('tenants').get();
-
   for (const tenantDoc of tenantsSnapshot.docs) {
     const tenantData = tenantDoc.data();
-    if (tenantData?.whatsappPhoneNumberId === phoneNumberId) {
-      return tenantDoc.id;
+    if (tenantData?.whatsappPhoneNumberId === phoneNumberId) return tenantDoc.id;
+  }
+  return process.env.WHATSAPP_DEFAULT_TENANT_ID || null;
+}
+
+/**
+ * Sanitiza objeto reemplazando undefined por null (Firestore rechaza undefined)
+ */
+function sanitizeForFirestore<T extends Record<string, unknown>>(obj: T): T {
+  const result: Record<string, unknown> = {};
+  for (const key in obj) {
+    const value = obj[key];
+    if (value === undefined) {
+      result[key] = null;
+    } else {
+      result[key] = value;
     }
   }
-
-  const defaultTenantId = process.env.WHATSAPP_DEFAULT_TENANT_ID;
-  if (defaultTenantId) {
-    return defaultTenantId;
-  }
-
-  return null;
+  return result as T;
 }
 
 export const whatsappWebhookService = {
@@ -92,24 +82,17 @@ export const whatsappWebhookService = {
     failed: number;
     errors: string[];
   }> {
-    const result = {
-      processed: 0,
-      failed: 0,
-      errors: [] as string[],
-    };
-
+    const result = { processed: 0, failed: 0, errors: [] as string[] };
     if (payload.object !== 'whatsapp_business_account') {
       result.errors.push(`Objeto no reconocido: ${payload.object}`);
       return result;
     }
-
     for (const entry of payload.entry) {
       const entryResult = await this.processEntry(entry);
       result.processed += entryResult.processed;
       result.failed += entryResult.failed;
       result.errors.push(...entryResult.errors);
     }
-
     return result;
   },
 
@@ -118,49 +101,27 @@ export const whatsappWebhookService = {
     failed: number;
     errors: string[];
   }> {
-    const result = {
-      processed: 0,
-      failed: 0,
-      errors: [] as string[],
-    };
+    const result = { processed: 0, failed: 0, errors: [] as string[] };
 
     for (const change of entry.changes) {
-      if (change.field !== 'messages') {
-        continue;
-      }
+      if (change.field !== 'messages') continue;
 
       const value = change.value;
       const phoneNumberId = value.metadata?.phone_number_id;
-
-      if (!phoneNumberId) {
-        result.errors.push('Evento sin phone_number_id');
-        result.failed++;
-        continue;
-      }
+      if (!phoneNumberId) { result.errors.push('Evento sin phone_number_id'); result.failed++; continue; }
 
       const tenantId = await findTenantByPhoneNumber(phoneNumberId);
-      if (!tenantId) {
-        result.errors.push(`No se encontró tenant para phoneNumberId: ${phoneNumberId}`);
-        result.failed++;
-        continue;
-      }
+      if (!tenantId) { result.errors.push(`No se encontró tenant para phoneNumberId: ${phoneNumberId}`); result.failed++; continue; }
 
       if (value.messages && value.messages.length > 0) {
         for (const message of value.messages) {
           try {
-            console.log('[Webhook] Procesando mensaje:', {
-              from: message.from,
-              type: message.type,
-              id: message.id,
-            });
             const contact = value.contacts?.find(c => c.wa_id === message.from);
             await this.saveMessageReceived(tenantId, value, message, contact?.profile.name);
             result.processed++;
           } catch (err) {
             result.failed++;
             const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
-            const errorStack = err instanceof Error ? err.stack : '';
-            console.error('[Webhook] Error procesando mensaje:', errorMessage, errorStack);
             result.errors.push(`Error procesando mensaje: ${errorMessage}`);
           }
         }
@@ -169,18 +130,12 @@ export const whatsappWebhookService = {
       if (value.statuses && value.statuses.length > 0) {
         for (const status of value.statuses) {
           try {
-            console.log('[Webhook] Procesando status:', {
-              messageId: status.id,
-              status: status.status,
-              recipient: status.recipient_id,
-            });
             await this.saveStatusEvent(tenantId, value, status);
             result.processed++;
           } catch (err) {
             result.failed++;
             const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
-            const errorStack = err instanceof Error ? err.stack : '';
-            console.error('[Webhook] Error procesando status:', errorMessage, errorStack);
+            console.error('[Webhook] Error procesando status:', errorMessage);
             result.errors.push(`Error procesando status ${status.id}: ${errorMessage}`);
           }
         }
@@ -189,25 +144,16 @@ export const whatsappWebhookService = {
       if (value.errors && value.errors.length > 0) {
         for (const error of value.errors) {
           try {
-            console.error('[Webhook] Meta envió error:', {
-              code: error.code,
-              title: error.title,
-              message: error.message,
-              details: error.error_data?.details,
-            });
             await this.saveErrorEvent(tenantId, value, error);
             result.processed++;
           } catch (err) {
             result.failed++;
             const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
-            const errorStack = err instanceof Error ? err.stack : '';
-            console.error('[Webhook] Error procesando error de Meta:', errorMessage, errorStack);
             result.errors.push(`Error procesando error global: ${errorMessage}`);
           }
         }
       }
     }
-
     return result;
   },
 
@@ -224,10 +170,6 @@ export const whatsappWebhookService = {
     const mediaInfo = getMediaPayload(message);
     if (mediaInfo) {
       try {
-        console.log('[Webhook] Transfiriendo media a Blob:', {
-          type: mediaInfo.type,
-          metaMediaId: mediaInfo.payload.id,
-        });
         const pathname = `whatsapp/${tenantId}/${message.id}_${mediaInfo.type}`;
         const transferred = await whatsappMediaService.transferMetaMediaToBlob(
           mediaInfo.payload.id,
@@ -242,7 +184,6 @@ export const whatsappWebhookService = {
           fileName: mediaInfo.payload.filename,
           metaMediaId: mediaInfo.payload.id,
         };
-        console.log('[Webhook] Media transferida exitosamente:', transferred.url);
       } catch (mediaError) {
         console.error('[Webhook] Error transfiriendo media a Blob:', mediaError);
       }
@@ -293,21 +234,14 @@ export const whatsappWebhookService = {
   ): Promise<void> {
     let eventType: WebhookEventType = 'unknown';
     switch (status.status) {
-      case 'sent':
-        eventType = 'message_sent';
-        break;
-      case 'delivered':
-        eventType = 'message_delivered';
-        break;
-      case 'read':
-        eventType = 'message_read';
-        break;
-      case 'failed':
-        eventType = 'message_failed';
-        break;
+      case 'sent': eventType = 'message_sent'; break;
+      case 'delivered': eventType = 'message_delivered'; break;
+      case 'read': eventType = 'message_read'; break;
+      case 'failed': eventType = 'message_failed'; break;
     }
 
-    const event: WhatsAppWebhookEventInput = {
+    // Sanitizar: reemplazar undefined por null ANTES de pasar a Firestore
+    const event = sanitizeForFirestore({
       tenantId,
       eventType,
       messageId: status.id,
@@ -321,18 +255,11 @@ export const whatsappWebhookService = {
       eventTimestamp: new Date(parseInt(status.timestamp, 10) * 1000).toISOString(),
       receivedAt: new Date().toISOString(),
       rawPayload: status,
-    };
+    } as unknown as WhatsAppWebhookEventInput);
 
     if (status.errors && status.errors.length > 0) {
-      event.errorCode = status.errors[0].code;
-      event.errorMessage = status.errors[0].message;
-      console.error('[Webhook] Status con error de Meta:', {
-        messageId: status.id,
-        status: status.status,
-        errorCode: status.errors[0].code,
-        errorMessage: status.errors[0].message,
-        errorDetails: status.errors[0].error_data?.details,
-      });
+      (event as Record<string, unknown>).errorCode = status.errors[0].code;
+      (event as Record<string, unknown>).errorMessage = status.errors[0].message;
     }
 
     await this.saveEvent(tenantId, event);
@@ -350,9 +277,9 @@ export const whatsappWebhookService = {
   async saveErrorEvent(
     tenantId: string,
     value: WebhookChangeValue,
-    error: { code: number; title: string; message: string; error_data?: { details: string } }
+    error: { code: number; title: string; message: string }
   ): Promise<void> {
-    const event: WhatsAppWebhookEventInput = {
+    const event = sanitizeForFirestore({
       tenantId,
       eventType: 'message_failed',
       errorCode: error.code,
@@ -363,7 +290,7 @@ export const whatsappWebhookService = {
       eventTimestamp: new Date().toISOString(),
       receivedAt: new Date().toISOString(),
       rawPayload: error,
-    };
+    } as unknown as WhatsAppWebhookEventInput);
 
     await this.saveEvent(tenantId, event);
   },
@@ -374,7 +301,6 @@ export const whatsappWebhookService = {
       .collection('tenants')
       .doc(tenantId)
       .collection(WEBHOOK_EVENTS_COLLECTION);
-
     await eventsRef.add(event);
   },
 };

@@ -158,14 +158,19 @@ function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => v
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // WhatsApp acepta: audio/ogg, audio/opus, audio/mp4, audio/mpeg
+      // Prioridad de formatos: evitar audio/mp4 (genera contenedores inválidos)
+      // 1. audio/ogg;codecs=opus (mejor, nativo en Chrome/Firefox)
+      // 2. audio/ogg (fallback)
+      // 3. audio/webm;codecs=opus (contenedor válido, codec Opus)
+      // 4. audio/webm (último recurso válido)
+      // NOTA: NO usar audio/mp4, WhatsApp lo rechaza porque el contenedor no es MP4 real
       const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
         ? 'audio/ogg;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/ogg')
         ? 'audio/ogg'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : 'audio/webm;codecs=opus';
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
       
       console.log('[AudioRecorder] Using mimeType:', mimeType);
       
