@@ -1,9 +1,5 @@
 // src/types/whatsappWebhook.types.ts
 
-// ==========================================
-// TIPOS PARA WEBHOOKS DE WHATSAPP BUSINESS API
-// ==========================================
-
 export type WebhookEventType = 
   | 'message_received'
   | 'message_delivered'
@@ -12,7 +8,6 @@ export type WebhookEventType =
   | 'message_sent'
   | 'unknown';
 
-// Tipos de mensajes entrantes
 export type IncomingMessageType = 
   | 'text'
   | 'image'
@@ -26,17 +21,12 @@ export type IncomingMessageType =
   | 'reaction'
   | 'unsupported';
 
-// Estados de mensaje (statuses)
 export type MessageStatus = 
   | 'sent'
   | 'delivered'
   | 'read'
   | 'failed'
   | 'deleted';
-
-// ==========================================
-// ESTRUCTURA DE EVENTOS DE META
-// ==========================================
 
 export interface WebhookMetadata {
   display_phone_number: string;
@@ -52,6 +42,15 @@ export interface WebhookContact {
 
 export interface WebhookTextMessage {
   body: string;
+}
+
+export interface WebhookMediaPayload {
+  mime_type: string;
+  sha256: string;
+  id: string;
+  voice?: boolean;
+  caption?: string;
+  filename?: string;
 }
 
 export interface WebhookInteractiveMessage {
@@ -78,6 +77,10 @@ export interface WebhookIncomingMessage {
   timestamp: string;
   type: IncomingMessageType;
   text?: WebhookTextMessage;
+  image?: WebhookMediaPayload;
+  audio?: WebhookMediaPayload;
+  video?: WebhookMediaPayload;
+  document?: WebhookMediaPayload;
   interactive?: WebhookInteractiveMessage;
   button?: WebhookButtonMessage;
   referral?: {
@@ -134,7 +137,7 @@ export interface WebhookChange {
 }
 
 export interface WebhookEntry {
-  id: string; // WABA ID
+  id: string;
   changes: WebhookChange[];
 }
 
@@ -143,51 +146,30 @@ export interface WebhookPayload {
   entry: WebhookEntry[];
 }
 
-// ==========================================
-// ESTRUCTURA PARA GUARDAR EN FIRESTORE
-// ==========================================
-
 export interface WhatsAppWebhookEvent {
-  id: string;                    // ID generado por Firestore
-  tenantId: string;              // Tenant al que pertenece
+  id: string;
+  tenantId: string;
   eventType: WebhookEventType;
-  
-  // Datos del mensaje (si aplica)
-  messageId?: string;            // ID del mensaje de WhatsApp (wamid...)
-  from?: string;                 // Número que envió (si es mensaje entrante)
-  to?: string;                   // Número destinatario (si es status)
-  messageText?: string;          // Texto del mensaje (si es text)
+  messageId?: string;
+  from?: string;
+  to?: string;
+  messageText?: string;
   messageType?: IncomingMessageType;
-  
-  // Datos del status (si aplica)
   status?: MessageStatus;
   errorCode?: number;
   errorMessage?: string;
-  
-  // Datos de conversación
-  conversationId?: string;       // ID de la conversación de 24h
-  conversationType?: string;     // business_initiated, user_initiated, etc.
-  
-  // Metadata
-  wabaId: string;                // WhatsApp Business Account ID
-  phoneNumberId: string;         // Phone Number ID
+  conversationId?: string;
+  conversationType?: string;
+  wabaId: string;
+  phoneNumberId: string;
   displayPhoneNumber?: string;
-  contactName?: string;          // Nombre del contacto (si viene en el evento)
-  
-  // Timestamps
-  eventTimestamp: string;        // Timestamp del evento (de Meta)
-  receivedAt: string;            // Timestamp cuando lo recibimos
-  
-  // Raw payload (para debugging)
+  contactName?: string;
+  eventTimestamp: string;
+  receivedAt: string;
   rawPayload: unknown;
 }
 
-// Para crear un nuevo evento (sin id)
 export type WhatsAppWebhookEventInput = Omit<WhatsAppWebhookEvent, 'id'>;
-
-// ==========================================
-// VERIFICACIÓN DE WEBHOOK (GET request)
-// ==========================================
 
 export interface WebhookVerifyParams {
   'hub.mode': string;

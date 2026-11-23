@@ -6,6 +6,18 @@ export type MessageDirection = 'INBOUND' | 'OUTBOUND';
 
 export type OutboundMessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
 
+export type WhatsAppMediaType = 'image' | 'audio' | 'video' | 'document';
+
+export interface WhatsAppMessageMedia {
+  type: WhatsAppMediaType;
+  mediaFileId?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  caption?: string;
+  fileName?: string;
+  metaMediaId?: string;
+}
+
 export interface WhatsAppConversation {
   id: string;
   tenantId: string;
@@ -47,6 +59,7 @@ export interface WhatsAppMessage {
   metaMessageId?: string;
   status?: OutboundMessageStatus;
   templateName?: string;
+  media?: WhatsAppMessageMedia;
   timestamp: string;
   createdAt: string;
 }
@@ -60,6 +73,7 @@ export interface WhatsAppMessageInput {
   metaMessageId?: string;
   status?: OutboundMessageStatus;
   templateName?: string;
+  media?: WhatsAppMessageMedia;
   timestamp: string;
   createdAt: string;
 }

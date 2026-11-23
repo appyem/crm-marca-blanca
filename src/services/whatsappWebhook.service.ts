@@ -2,17 +2,23 @@
 
 import { getFirebaseAdmin } from '@/lib/firebase/admin';
 import { whatsappConversationService } from '@/services/whatsappConversation.service';
+import { whatsappMediaService } from '@/services/whatsappMedia.service';
 import {
   WebhookPayload,
   WebhookEntry,
   WebhookChangeValue,
   WebhookIncomingMessage,
   WebhookStatus,
+  WebhookMediaPayload,
   WhatsAppWebhookEventInput,
   WebhookEventType,
   MessageStatus,
 } from '@/types/whatsappWebhook.types';
-import { OutboundMessageStatus } from '@/types/whatsappConversation.types';
+import {
+  OutboundMessageStatus,
+  WhatsAppMessageMedia,
+  WhatsAppMediaType,
+} from '@/types/whatsappConversation.types';
 
 const WEBHOOK_EVENTS_COLLECTION = 'whatsappWebhookEvents';
 
@@ -31,13 +37,13 @@ function extractMessageText(message: WebhookIncomingMessage): string {
     case 'button':
       return `[Botón] ${message.button?.text || ''}`;
     case 'image':
-      return '[Imagen recibida]';
+      return message.image?.caption || '[Imagen recibida]';
     case 'video':
-      return '[Video recibido]';
+      return message.video?.caption || '[Video recibido]';
     case 'audio':
-      return '[Audio recibido]';
+      return '[Audio de voz recibido]';
     case 'document':
-      return '[Documento recibido]';
+      return `[Documento] ${message.document?.filename || 'recibido'}`;
     case 'location':
       return '[Ubicación recibida]';
     case 'contacts':
@@ -49,6 +55,16 @@ function extractMessageText(message: WebhookIncomingMessage): string {
     default:
       return '';
   }
+}
+
+function getMediaPayload(
+  message: WebhookIncomingMessage
+): { payload: WebhookMediaPayload; type: WhatsAppMediaType } | null {
+  if (message.image) return { payload: message.image, type: 'image' };
+  if (message.audio) return { payload: message.audio, type: 'audio' };
+  if (message.video) return { payload: message.video, type: 'video' };
+  if (message.document) return { payload: message.document, type: 'document' };
+  return null;
 }
 
 async function findTenantByPhoneNumber(phoneNumberId: string): Promise<string | null> {
@@ -180,9 +196,33 @@ export const whatsappWebhookService = {
     contactName?: string
   ): Promise<void> {
     const eventTimestamp = new Date(parseInt(message.timestamp, 10) * 1000).toISOString();
-    const text = extractMessageText(message);
+    let text = extractMessageText(message);
+    let media: WhatsAppMessageMedia | undefined;
 
-    // 1. Guardar evento crudo (auditoría)
+    // Si es multimedia, transferir de Meta a Vercel Blob (URL permanente)
+    const mediaInfo = getMediaPayload(message);
+    if (mediaInfo) {
+      try {
+        const pathname = `whatsapp/${tenantId}/${message.id}_${mediaInfo.type}`;
+        const transferred = await whatsappMediaService.transferMetaMediaToBlob(
+          mediaInfo.payload.id,
+          pathname
+        );
+        media = {
+          type: mediaInfo.type,
+          mediaFileId: transferred.url,
+          mimeType: transferred.contentType,
+          sizeBytes: transferred.sizeBytes,
+          caption: mediaInfo.payload.caption,
+          fileName: mediaInfo.payload.filename,
+          metaMediaId: mediaInfo.payload.id,
+        };
+      } catch (mediaError) {
+        console.error('[Webhook] Error transfiriendo media a Blob:', mediaError);
+        // Si falla, el mensaje se guarda como texto descriptivo sin media
+      }
+    }
+
     const event: WhatsAppWebhookEventInput = {
       tenantId,
       eventType: 'message_received',
@@ -200,7 +240,6 @@ export const whatsappWebhookService = {
     };
     await this.saveEvent(tenantId, event);
 
-    // 2. Crear/actualizar conversación + historial de chat
     const conversationId = await whatsappConversationService.upsertConversation({
       tenantId,
       phoneNumber: message.from,
@@ -217,6 +256,7 @@ export const whatsappWebhookService = {
       messageType: message.type,
       text,
       metaMessageId: message.id,
+      media,
       timestamp: eventTimestamp,
     });
   },
@@ -265,7 +305,6 @@ export const whatsappWebhookService = {
 
     await this.saveEvent(tenantId, event);
 
-    // Actualizar ticks de entrega (✓ ✓ azul) en el historial del chat
     const trackable: OutboundMessageStatus[] = ['sent', 'delivered', 'read', 'failed'];
     if (trackable.includes(status.status as OutboundMessageStatus)) {
       await whatsappConversationService.updateOutboundStatus({

@@ -4,6 +4,7 @@ import { getFirebaseAdmin } from '@/lib/firebase/admin';
 import {
   WhatsAppConversation,
   WhatsAppMessage,
+  WhatsAppMessageMedia,
   MessageDirection,
   OutboundMessageStatus,
   ConversationStatus,
@@ -51,16 +52,13 @@ function mapMessageDoc(doc: QueryDocumentSnapshot<DocumentData>): WhatsAppMessag
     metaMessageId: data.metaMessageId as string | undefined,
     status: data.status as OutboundMessageStatus | undefined,
     templateName: data.templateName as string | undefined,
+    media: (data.media as WhatsAppMessageMedia) || undefined,
     timestamp: (data.timestamp as string) || '',
     createdAt: (data.createdAt as string) || '',
   };
 }
 
 export const whatsappConversationService = {
-  /**
-   * Busca o crea la conversación de un número.
-   * Actualiza últimos datos del mensaje y contadores según dirección.
-   */
   async upsertConversation(params: {
     tenantId: string;
     phoneNumber: string;
@@ -106,7 +104,6 @@ export const whatsappConversationService = {
       return doc.id;
     }
 
-    // Nueva conversación: intentar vincular con contacto del CRM
     let contactId: string | undefined;
     let contactName = params.contactName || 'Contacto desconocido';
 
@@ -154,9 +151,6 @@ export const whatsappConversationService = {
     return newConvRef.id;
   },
 
-  /**
-   * Agrega un mensaje al historial de la conversación.
-   */
   async addMessage(params: {
     tenantId: string;
     conversationId: string;
@@ -166,6 +160,7 @@ export const whatsappConversationService = {
     metaMessageId?: string;
     status?: OutboundMessageStatus;
     templateName?: string;
+    media?: WhatsAppMessageMedia;
     timestamp: string;
   }): Promise<void> {
     const { db } = getFirebaseAdmin();
@@ -182,14 +177,12 @@ export const whatsappConversationService = {
         metaMessageId: params.metaMessageId || null,
         status: params.status || null,
         templateName: params.templateName || null,
+        media: params.media || null,
         timestamp: params.timestamp,
         createdAt: new Date().toISOString(),
       });
   },
 
-  /**
-   * Actualiza el estado de entrega de un mensaje saliente (delivered, read, failed).
-   */
   async updateOutboundStatus(params: {
     tenantId: string;
     metaMessageId: string;
@@ -210,9 +203,6 @@ export const whatsappConversationService = {
     return true;
   },
 
-  /**
-   * Lista conversaciones del tenant ordenadas por última actividad.
-   */
   async getConversationsByTenant(tenantId: string): Promise<WhatsAppConversation[]> {
     const { db } = getFirebaseAdmin();
     const snapshot = await db
@@ -226,9 +216,6 @@ export const whatsappConversationService = {
     return snapshot.docs.map(mapConversationDoc);
   },
 
-  /**
-   * Lista mensajes de una conversación en orden cronológico.
-   */
   async getMessagesByConversation(
     tenantId: string,
     conversationId: string
@@ -247,9 +234,6 @@ export const whatsappConversationService = {
     return messages;
   },
 
-  /**
-   * Marca la conversación como leída (unreadCount = 0).
-   */
   async markAsRead(tenantId: string, conversationId: string): Promise<void> {
     const { db } = getFirebaseAdmin();
     await db
@@ -260,9 +244,6 @@ export const whatsappConversationService = {
       .update({ unreadCount: 0, updatedAt: new Date().toISOString() });
   },
 
-  /**
-   * Cambia el estado manual de la conversación (ATENDIDA, CERRADA, etc.).
-   */
   async updateStatus(
     tenantId: string,
     conversationId: string,
