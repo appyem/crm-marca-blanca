@@ -157,9 +157,18 @@ function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => v
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+      
+      // WhatsApp acepta: audio/ogg, audio/opus, audio/mp4, audio/mpeg
+      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/ogg')
+        ? 'audio/ogg'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : 'audio/webm;codecs=opus';
+      
+      console.log('[AudioRecorder] Using mimeType:', mimeType);
+      
       const recorder = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
 
@@ -169,6 +178,7 @@ function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => v
 
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        console.log('[AudioRecorder] Recording complete, blob type:', blob.type, 'size:', blob.size);
         stream.getTracks().forEach(t => t.stop());
         if (timerRef.current) window.clearInterval(timerRef.current);
         onRecorded(blob);
@@ -181,6 +191,7 @@ function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => v
       timerRef.current = window.setInterval(() => setDuration(d => d + 1), 1000);
     } catch (err) {
       alert('No se pudo acceder al micrófono. Verifica los permisos del navegador.');
+      console.error('[AudioRecorder] Error:', err);
     }
   };
 
@@ -382,6 +393,12 @@ export default function WhatsAppInboxPage() {
   const handleSendMedia = async (fileToSend: File, caption?: string) => {
     if (!selectedConversation || !canReplyFree) return;
 
+    console.log('[Inbox] Sending media file:', {
+      name: fileToSend.name,
+      type: fileToSend.type,
+      size: fileToSend.size,
+    });
+
     if (fileToSend.size > MAX_FILE_SIZE) {
       setError(`El archivo es muy grande (${(fileToSend.size / 1024 / 1024).toFixed(1)}MB). Máximo ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
       return;
@@ -409,6 +426,9 @@ export default function WhatsAppInboxPage() {
       });
 
       const result = await response.json();
+      
+      console.log('[Inbox] Media send response:', result);
+      
       if (!response.ok || result.error) {
         throw new Error(result.error?.message || result.error || 'Error al enviar archivo');
       }
@@ -419,7 +439,9 @@ export default function WhatsAppInboxPage() {
       await loadMessages(selectedConversation.id, false);
       await loadConversations(true);
     } catch (err: unknown) {
-      setError(`Error al enviar archivo: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+      const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+      console.error('[Inbox] Error sending media:', err);
+      setError(`Error al enviar archivo: ${errorMessage}`);
     } finally {
       setIsUploadingMedia(false);
     }
@@ -434,7 +456,7 @@ export default function WhatsAppInboxPage() {
   };
 
   const handleRecordedAudio = async (blob: Blob) => {
-    const fileName = `audio_${Date.now()}.webm`;
+    const fileName = `audio_${Date.now()}.ogg`;
     const file = new File([blob], fileName, { type: blob.type });
     await handleSendMedia(file, 'Nota de voz');
   };
