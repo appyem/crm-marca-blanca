@@ -1,7 +1,6 @@
 // src/app/(dashboard)/whatsapp/inbox/page.tsx
 'use client';
 
-import { convertAudioToMP3 } from '@/services/audioConverter.service';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
@@ -151,7 +150,7 @@ function MessageContent({ message }: { message: WhatsAppMessage }) {
 function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => void; onCancel: () => void }) {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
 
@@ -159,61 +158,51 @@ function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => v
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Prioridad de formatos: evitar audio/mp4 (genera contenedores inválidos)
-      // 1. audio/ogg;codecs=opus (mejor, nativo en Chrome/Firefox)
-      // 2. audio/ogg (fallback)
-      // 3. audio/webm;codecs=opus (contenedor válido, codec Opus)
-      // 4. audio/webm (último recurso válido)
-      // NOTA: NO usar audio/mp4, WhatsApp lo rechaza porque el contenedor no es MP4 real
-      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? 'audio/ogg;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/ogg')
-        ? 'audio/ogg'
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      // Usar MediaRecorder nativo con Opus (formato que WhatsApp acepta)
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm';
       
-      console.log('[AudioRecorder] Using mimeType:', mimeType);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       
-      const recorder = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
 
-      recorder.ondataavailable = (e) => {
+      mediaRecorder.ondataavailable = (e: BlobEvent) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
 
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        console.log('[AudioRecorder] Recording complete, blob type:', blob.type, 'size:', blob.size);
-        stream.getTracks().forEach(t => t.stop());
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        console.log('[AudioRecorder] Audio generado:', blob.type, 'size:', blob.size);
+        stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
         if (timerRef.current) window.clearInterval(timerRef.current);
         onRecorded(blob);
       };
 
-      recorder.start();
-      setMediaRecorder(recorder);
+      mediaRecorder.start();
+      setRecorder(mediaRecorder);
       setIsRecording(true);
       setDuration(0);
       timerRef.current = window.setInterval(() => setDuration(d => d + 1), 1000);
     } catch (err) {
-      alert('No se pudo acceder al micrófono. Verifica los permisos del navegador.');
       console.error('[AudioRecorder] Error:', err);
+      alert('No se pudo acceder al micrófono. Verifica los permisos del navegador.');
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stop();
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
     }
     setIsRecording(false);
   };
 
   const cancelRecording = () => {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stream.getTracks().forEach(t => t.stop());
-      mediaRecorder.ondataavailable = null;
-      mediaRecorder.onstop = null;
-      mediaRecorder.stop();
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.stop();
     }
     if (timerRef.current) window.clearInterval(timerRef.current);
     setIsRecording(false);
@@ -251,6 +240,10 @@ function AudioRecorder({ onRecorded, onCancel }: { onRecorded: (blob: Blob) => v
     </div>
   );
 }
+
+
+
+
 
 export default function WhatsAppInboxPage() {
   const { user, loading: authLoading } = useAuth();
@@ -462,15 +455,9 @@ export default function WhatsAppInboxPage() {
   };
 
   const handleRecordedAudio = async (blob: Blob) => {
-    try {
-      const mp3Blob = await convertAudioToMP3(blob);
-      const fileName = `audio_${Date.now()}.mp3`;
-      const file = new File([mp3Blob], fileName, { type: 'audio/mpeg' });
-      await handleSendMedia(file, 'Nota de voz');
-    } catch (err) {
-      console.error('[Inbox] Error convirtiendo audio a MP3:', err);
-      setError('Error al procesar el audio. Intenta de nuevo.');
-    }
+    const fileName = `audio_${Date.now()}.mp3`;
+    const file = new File([blob], fileName, { type: 'audio/mpeg' });
+    await handleSendMedia(file, 'Nota de voz');
   };
 
   const handleChangeStatus = async (status: ConversationStatus) => {

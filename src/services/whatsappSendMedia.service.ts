@@ -25,42 +25,25 @@ interface SendMediaParams {
 const MAX_FILE_SIZE = 16 * 1024 * 1024;
 
 /**
- * WhatsApp acepta estos formatos de audio:
- * - audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg, audio/opus
- * 
- * Los navegadores modernos graban en webm/opus o mp4/opus.
- * WhatsApp NO acepta webm directamente, pero sí opus dentro de ogg.
- * Solución: re-etiquetar webm/mp4 como audio/ogg (el codec Opus es el mismo).
+ * Convierte MIME types del navegador a formatos compatibles con WhatsApp
  */
 function getMetaCompatibleMimeType(rawMimeType: string, mediaType: SendableMediaType): string {
   const baseMime = rawMimeType.split(';')[0].trim().toLowerCase();
   
   if (mediaType === 'audio') {
-    // WhatsApp NO acepta audio/webm ni audio/mp4 inválido
-    // Los audios grabados en webm/mp4 en realidad usan codec Opus, 
-    // que WhatsApp SÍ acepta dentro de contenedor OGG
-    if (
-      baseMime === 'audio/webm' ||
-      baseMime === 'audio/mp4' ||
-      baseMime === 'audio/m4a' ||
-      baseMime === 'audio/x-m4a' ||
-      baseMime.startsWith('audio/webm') ||
-      baseMime.startsWith('audio/mp4')
-    ) {
-      return 'audio/ogg';
+    // WhatsApp acepta: audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg, audio/opus
+    // Los navegadores graban en webm/opus, pero WhatsApp lo acepta si le decimos que es ogg
+    if (baseMime === 'audio/webm' || baseMime.startsWith('audio/webm')) {
+      return 'audio/ogg'; // Re-etiquetar webm como ogg (mismo codec Opus)
     }
-    // Formatos ya compatibles
-    if (['audio/ogg', 'audio/opus', 'audio/aac', 'audio/mpeg', 'audio/amr'].includes(baseMime)) {
+    if (['audio/ogg', 'audio/opus', 'audio/aac', 'audio/mpeg', 'audio/amr', 'audio/mp4'].includes(baseMime)) {
       return baseMime;
     }
-    // Fallback: asumir OGG (mejor que rechazar)
-    console.warn(`[whatsappSendMedia] MIME de audio desconocido: ${baseMime}, usando audio/ogg`);
     return 'audio/ogg';
   }
   
   if (mediaType === 'video') {
-    if (baseMime === 'video/mp4' || baseMime === 'video/3gpp') return baseMime;
-    return 'video/mp4';
+    return baseMime === 'video/3gpp' ? 'video/3gpp' : 'video/mp4';
   }
   
   if (mediaType === 'image') {
@@ -78,6 +61,7 @@ function getCorrectedFileName(fileName: string, metaMime: string): string {
     'audio/mpeg': '.mp3',
     'audio/aac': '.aac',
     'audio/amr': '.amr',
+    'audio/mp4': '.m4a',
     'video/mp4': '.mp4',
     'video/3gpp': '.3gp',
     'image/jpeg': '.jpg',
@@ -104,8 +88,6 @@ export const whatsappSendMediaService = {
       mediaType: params.mediaType,
       originalMimeType: params.mimeType,
       metaMimeType: metaMime,
-      originalFileName: params.fileName,
-      correctedFileName,
       fileSize: params.buffer.length,
     });
 
