@@ -8,6 +8,7 @@ import { auth } from '@/lib/firebase/client';
 import {
   WhatsAppConversation,
   WhatsAppMessage,
+  WhatsAppMessageMedia,
   ConversationStatus,
 } from '@/types/whatsappConversation.types';
 
@@ -51,6 +52,194 @@ function getStatusTicks(message: WhatsAppMessage): { symbol: string; color: stri
       return { symbol: '⚠️', color: '#ef4444' };
     default:
       return { symbol: '✓', color: '#8696a0' };
+  }
+}
+
+function AudioPlayer({ url }: { url: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '240px' }}>
+      <audio
+        ref={audioRef}
+        src={url}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => { setIsPlaying(false); setCurrentTime(0); }}
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+        style={{ display: 'none' }}
+      />
+      <button
+        onClick={togglePlay}
+        style={{
+          width: '36px',
+          height: '36px',
+          borderRadius: '50%',
+          backgroundColor: '#25D366',
+          color: 'white',
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '14px',
+          flexShrink: 0,
+        }}
+        aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+      >
+        {isPlaying ? '⏸' : '▶'}
+      </button>
+      <div style={{ flex: 1, minWidth: '120px' }}>
+        <div style={{ height: '4px', backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+          <div
+            style={{
+              height: '100%',
+              width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%',
+              backgroundColor: '#25D366',
+              transition: 'width 0.1s linear',
+            }}
+          />
+        </div>
+        <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>
+          {currentTime.toFixed(1)}s / {duration.toFixed(1)}s
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ImageViewer({ url, caption }: { url: string; caption?: string }) {
+  const [isZoomed, setIsZoomed] = useState(false);
+
+  return (
+    <>
+      <div onClick={() => setIsZoomed(true)} style={{ cursor: 'zoom-in' }}>
+        <img
+          src={url}
+          alt={caption || 'Imagen recibida'}
+          style={{ maxWidth: '100%', maxHeight: '240px', borderRadius: '6px', display: 'block' }}
+        />
+        {caption && (
+          <p style={{ fontSize: '12px', color: '#303030', margin: '6px 0 0' }}>{caption}</p>
+        )}
+      </div>
+      {isZoomed && (
+        <div
+          onClick={() => setIsZoomed(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100,
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'zoom-out',
+            padding: '20px',
+          }}
+        >
+          <img src={url} alt={caption || 'Imagen ampliada'} style={{ maxWidth: '95%', maxHeight: '95%' }} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function VideoPlayer({ url, caption }: { url: string; caption?: string }) {
+  return (
+    <div>
+      <video
+        src={url}
+        controls
+        style={{ maxWidth: '100%', maxHeight: '280px', borderRadius: '6px', display: 'block' }}
+      />
+      {caption && (
+        <p style={{ fontSize: '12px', color: '#303030', margin: '6px 0 0' }}>{caption}</p>
+      )}
+    </div>
+  );
+}
+
+function DocumentView({ url, fileName }: { url: string; fileName?: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      download
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        padding: '10px 12px',
+        backgroundColor: 'rgba(0,0,0,0.05)',
+        borderRadius: '6px',
+        textDecoration: 'none',
+        color: '#111827',
+        minWidth: '200px',
+      }}
+    >
+      <span style={{ fontSize: '28px' }}>📄</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: '13px', fontWeight: '600', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {fileName || 'Documento'}
+        </p>
+        <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>
+          Clic para descargar
+        </p>
+      </div>
+    </a>
+  );
+}
+
+function MessageContent({ message }: { message: WhatsAppMessage }) {
+  const media = message.media;
+
+  if (!media) {
+    return (
+      <p style={{ fontSize: '14px', color: '#303030', margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
+        {message.text}
+      </p>
+    );
+  }
+
+  const mediaUrl = media.mediaFileId;
+  if (!mediaUrl) {
+    return (
+      <p style={{ fontSize: '13px', color: '#6b7280', fontStyle: 'italic', margin: 0 }}>
+        [Archivo multimedia no disponible]
+      </p>
+    );
+  }
+
+  switch (media.type) {
+    case 'audio':
+      return <AudioPlayer url={mediaUrl} />;
+    case 'image':
+      return <ImageViewer url={mediaUrl} caption={media.caption} />;
+    case 'video':
+      return <VideoPlayer url={mediaUrl} caption={media.caption} />;
+    case 'document':
+      return <DocumentView url={mediaUrl} fileName={media.fileName} />;
+    default:
+      return (
+        <p style={{ fontSize: '14px', color: '#303030', margin: 0 }}>
+          {message.text || '[Archivo multimedia]'}
+        </p>
+      );
   }
 }
 
@@ -130,14 +319,12 @@ export default function WhatsAppInboxPage() {
     }
   }, [authLoading, user, loadConversations]);
 
-  // Auto-refresh de conversaciones cada 20 segundos
   useEffect(() => {
     if (!user) return;
     const interval = setInterval(() => loadConversations(true), 20000);
     return () => clearInterval(interval);
   }, [user, loadConversations]);
 
-  // Auto-refresh de mensajes cada 10 segundos con conversación abierta
   useEffect(() => {
     if (!selectedConversation) return;
     const interval = setInterval(() => loadMessages(selectedConversation.id, true), 10000);
@@ -155,7 +342,6 @@ export default function WhatsAppInboxPage() {
     setReplyText('');
     await loadMessages(conversation.id, false);
 
-    // Marcar como leída
     if (conversation.unreadCount > 0) {
       try {
         const token = await auth.currentUser?.getIdToken();
@@ -284,7 +470,6 @@ export default function WhatsAppInboxPage() {
           </div>
         )}
 
-        {/* FILTROS POR ESTADO */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
           {(['ALL', 'PENDIENTE', 'EN_CURSO', 'ATENDIDA', 'CERRADA'] as StatusFilter[]).map(f => (
             <button
@@ -309,7 +494,6 @@ export default function WhatsAppInboxPage() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '16px', minHeight: '70vh' }}>
 
-          {/* LISTA DE CONVERSACIONES */}
           <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid #e5e7eb' }}>
               <input
@@ -369,7 +553,6 @@ export default function WhatsAppInboxPage() {
             </div>
           </div>
 
-          {/* VISTA DE CHAT */}
           <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {!selectedConversation ? (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#9ca3af' }}>
@@ -378,7 +561,6 @@ export default function WhatsAppInboxPage() {
               </div>
             ) : (
               <>
-                {/* HEADER DEL CHAT */}
                 <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                   <div>
                     <p style={{ fontSize: '15px', fontWeight: '700', color: '#111827', margin: 0 }}>
@@ -407,7 +589,6 @@ export default function WhatsAppInboxPage() {
                   </div>
                 </div>
 
-                {/* MENSAJES */}
                 <div style={{ flex: 1, overflowY: 'auto', padding: '20px', backgroundColor: '#ece5dd', backgroundImage: 'radial-gradient(#d6cec4 1px, transparent 1px)', backgroundSize: '16px 16px' }}>
                   {isLoadingMessages && messages.length === 0 ? (
                     <p style={{ textAlign: 'center', color: '#6b7280', fontSize: '13px' }}>Cargando mensajes...</p>
@@ -423,17 +604,15 @@ export default function WhatsAppInboxPage() {
                       >
                         <div
                           style={{
-                            maxWidth: '65%',
+                            maxWidth: '70%',
                             padding: '8px 12px',
                             borderRadius: '8px',
                             backgroundColor: msg.direction === 'OUTBOUND' ? '#dcf8c6' : 'white',
                             boxShadow: '0 1px 1px rgba(0,0,0,0.1)',
                           }}
                         >
-                          <p style={{ fontSize: '14px', color: '#303030', margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
-                            {msg.text}
-                          </p>
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                          <MessageContent message={msg} />
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
                             <span style={{ fontSize: '10px', color: '#8696a0' }}>{formatClockTime(msg.timestamp)}</span>
                             {msg.direction === 'OUTBOUND' && (
                               <span style={{ fontSize: '10px', color: getStatusTicks(msg).color }}>
@@ -448,7 +627,6 @@ export default function WhatsAppInboxPage() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* CAJA DE RESPUESTA */}
                 <div style={{ padding: '14px 20px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
                   {canReplyFree ? (
                     <>
