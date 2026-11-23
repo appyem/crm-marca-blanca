@@ -148,12 +148,19 @@ export const whatsappWebhookService = {
       if (value.messages && value.messages.length > 0) {
         for (const message of value.messages) {
           try {
+            console.log('[Webhook] Procesando mensaje:', {
+              from: message.from,
+              type: message.type,
+              id: message.id,
+            });
             const contact = value.contacts?.find(c => c.wa_id === message.from);
             await this.saveMessageReceived(tenantId, value, message, contact?.profile.name);
             result.processed++;
           } catch (err) {
             result.failed++;
             const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+            const errorStack = err instanceof Error ? err.stack : '';
+            console.error('[Webhook] Error procesando mensaje:', errorMessage, errorStack);
             result.errors.push(`Error procesando mensaje: ${errorMessage}`);
           }
         }
@@ -162,17 +169,24 @@ export const whatsappWebhookService = {
       if (value.statuses && value.statuses.length > 0) {
         for (const status of value.statuses) {
           try {
+            console.log('[Webhook] Procesando status:', {
+              messageId: status.id,
+              status: status.status,
+              recipient: status.recipient_id,
+            });
             await this.saveStatusEvent(tenantId, value, status);
             result.processed++;
           } catch (err) {
             result.failed++;
             const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+            const errorStack = err instanceof Error ? err.stack : '';
+            console.error('[Webhook] Error procesando status:', errorMessage, errorStack);
             result.errors.push(`Error procesando status ${status.id}: ${errorMessage}`);
           }
         }
       }
 
-            if (value.errors && value.errors.length > 0) {
+      if (value.errors && value.errors.length > 0) {
         for (const error of value.errors) {
           try {
             console.error('[Webhook] Meta envió error:', {
@@ -186,11 +200,12 @@ export const whatsappWebhookService = {
           } catch (err) {
             result.failed++;
             const errorMessage = err instanceof Error ? err.message : 'Error desconocido';
+            const errorStack = err instanceof Error ? err.stack : '';
+            console.error('[Webhook] Error procesando error de Meta:', errorMessage, errorStack);
             result.errors.push(`Error procesando error global: ${errorMessage}`);
           }
         }
       }
-
     }
 
     return result;
@@ -206,10 +221,13 @@ export const whatsappWebhookService = {
     let text = extractMessageText(message);
     let media: WhatsAppMessageMedia | undefined;
 
-    // Si es multimedia, transferir de Meta a Vercel Blob (URL permanente)
     const mediaInfo = getMediaPayload(message);
     if (mediaInfo) {
       try {
+        console.log('[Webhook] Transfiriendo media a Blob:', {
+          type: mediaInfo.type,
+          metaMediaId: mediaInfo.payload.id,
+        });
         const pathname = `whatsapp/${tenantId}/${message.id}_${mediaInfo.type}`;
         const transferred = await whatsappMediaService.transferMetaMediaToBlob(
           mediaInfo.payload.id,
@@ -224,9 +242,9 @@ export const whatsappWebhookService = {
           fileName: mediaInfo.payload.filename,
           metaMediaId: mediaInfo.payload.id,
         };
+        console.log('[Webhook] Media transferida exitosamente:', transferred.url);
       } catch (mediaError) {
         console.error('[Webhook] Error transfiriendo media a Blob:', mediaError);
-        // Si falla, el mensaje se guarda como texto descriptivo sin media
       }
     }
 
@@ -308,6 +326,13 @@ export const whatsappWebhookService = {
     if (status.errors && status.errors.length > 0) {
       event.errorCode = status.errors[0].code;
       event.errorMessage = status.errors[0].message;
+      console.error('[Webhook] Status con error de Meta:', {
+        messageId: status.id,
+        status: status.status,
+        errorCode: status.errors[0].code,
+        errorMessage: status.errors[0].message,
+        errorDetails: status.errors[0].error_data?.details,
+      });
     }
 
     await this.saveEvent(tenantId, event);
@@ -325,7 +350,7 @@ export const whatsappWebhookService = {
   async saveErrorEvent(
     tenantId: string,
     value: WebhookChangeValue,
-    error: { code: number; title: string; message: string }
+    error: { code: number; title: string; message: string; error_data?: { details: string } }
   ): Promise<void> {
     const event: WhatsAppWebhookEventInput = {
       tenantId,
