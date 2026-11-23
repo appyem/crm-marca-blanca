@@ -1,133 +1,125 @@
 // src/services/mediaConverter.service.ts
 
-import { spawn } from 'child_process';
-import { promises as fs } from 'fs';
-import path from 'path';
-import os from 'os';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { toBlobURL, fetchFile } from '@ffmpeg/util';
 
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+// Singleton para reutilizar la instancia de FFmpeg
+let ffmpegInstance: FFmpeg | null = null;
+
+async function getFFmpeg(): Promise<FFmpeg> {
+  if (ffmpegInstance) {
+    return ffmpegInstance;
+  }
+
+  const ffmpeg = new FFmpeg();
+  
+  // Cargar FFmpeg desde CDN
+  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+  });
+
+  ffmpegInstance = ffmpeg;
+  return ffmpeg;
+}
 
 export const mediaConverterService = {
   /**
    * Convierte video a formato compatible con WhatsApp (H.264 + AAC)
    */
   async convertVideoToWhatsAppFormat(inputBuffer: Buffer): Promise<Buffer> {
-    const tmpDir = os.tmpdir();
-    const inputFile = path.join(tmpDir, `input_${Date.now()}.mp4`);
-    const outputFile = path.join(tmpDir, `output_${Date.now()}.mp4`);
-
+    console.log('[mediaConverter] Convirtiendo video a H.264 + AAC...');
+    
     try {
-      // Escribir archivo temporal
-      await fs.writeFile(inputFile, inputBuffer);
+      const ffmpeg = await getFFmpeg();
+      
+      // Escribir archivo de entrada
+      await ffmpeg.writeFile('input.mp4', new Uint8Array(inputBuffer));
 
       // Convertir con ffmpeg
-      await new Promise<void>((resolve, reject) => {
-        const ffmpeg = spawn(ffmpegPath, [
-          '-i', inputFile,
-          '-c:v', 'libx264',           // Codec video H.264
-          '-profile:v', 'main',         // Perfil main
-          '-level', '3.1',              // Nivel 3.1
-          '-c:a', 'aac',               // Codec audio AAC
-          '-b:a', '128k',              // Bitrate audio 128k
-          '-preset', 'fast',           // Velocidad de conversión
-          '-crf', '23',                // Calidad (23 es default)
-          '-movflags', '+faststart',   // Optimizar para streaming
-          '-y',                        // Sobrescribir
-          outputFile
-        ]);
-
-        ffmpeg.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`ffmpeg salió con código ${code}`));
-          }
-        });
-
-        ffmpeg.on('error', (err) => {
-          reject(err);
-        });
-
-        // Timeout de 45 segundos
-        setTimeout(() => {
-          ffmpeg.kill();
-          reject(new Error('Timeout en conversión de video'));
-        }, 45000);
-      });
+      await ffmpeg.exec([
+        '-i', 'input.mp4',
+        '-c:v', 'libx264',           // Codec video H.264
+        '-profile:v', 'main',         // Perfil main
+        '-level', '3.1',              // Nivel 3.1
+        '-c:a', 'aac',               // Codec audio AAC
+        '-b:a', '128k',              // Bitrate audio 128k
+        '-preset', 'fast',           // Velocidad de conversión
+        '-crf', '23',                // Calidad
+        '-movflags', '+faststart',   // Optimizar para streaming
+        '-y',                        // Sobrescribir
+        'output.mp4'
+      ]);
 
       // Leer archivo convertido
-      const outputBuffer = await fs.readFile(outputFile);
-      return outputBuffer;
-    } finally {
+      const data = await ffmpeg.readFile('output.mp4');
+      const outputBuffer = Buffer.from(data as Uint8Array);
+
+      console.log('[mediaConverter] Video convertido exitosamente:', {
+        originalSize: inputBuffer.length,
+        convertedSize: outputBuffer.length,
+      });
+
       // Limpiar archivos temporales
-      try {
-        await fs.unlink(inputFile);
-        await fs.unlink(outputFile);
-      } catch (e) {
-        // Ignorar errores de limpieza
-      }
+      await ffmpeg.deleteFile('input.mp4');
+      await ffmpeg.deleteFile('output.mp4');
+
+      return outputBuffer;
+    } catch (error) {
+      console.error('[mediaConverter] Error convirtiendo video:', error);
+      throw new Error('No se pudo convertir el video a formato compatible');
     }
   },
 
   /**
-   * Convierte audio a formato compatible con WhatsApp (AAC en MP4 o OGG Opus)
+   * Convierte audio a formato compatible con WhatsApp (AAC en M4A)
    */
   async convertAudioToWhatsAppFormat(inputBuffer: Buffer, inputMimeType: string): Promise<Buffer> {
-    const tmpDir = os.tmpdir();
-    const inputExt = inputMimeType.includes('ogg') ? 'ogg' : 
-                     inputMimeType.includes('mp4') ? 'mp4' :
-                     inputMimeType.includes('mpeg') ? 'mp3' :
-                     inputMimeType.includes('wav') ? 'wav' : 'audio';
-    const inputFile = path.join(tmpDir, `input_${Date.now()}.${inputExt}`);
-    const outputFile = path.join(tmpDir, `output_${Date.now()}.m4a`); // M4A = AAC en contenedor MP4
-
+    console.log('[mediaConverter] Convirtiendo audio a AAC...');
+    
     try {
-      // Escribir archivo temporal
-      await fs.writeFile(inputFile, inputBuffer);
+      const ffmpeg = await getFFmpeg();
+      
+      // Determinar extensión según MIME type
+      const inputExt = inputMimeType.includes('ogg') ? 'ogg' : 
+                       inputMimeType.includes('mp4') ? 'mp4' :
+                       inputMimeType.includes('mpeg') ? 'mp3' :
+                       inputMimeType.includes('wav') ? 'wav' :
+                       inputMimeType.includes('webm') ? 'webm' : 'audio';
+
+      // Escribir archivo de entrada
+      await ffmpeg.writeFile(`input.${inputExt}`, new Uint8Array(inputBuffer));
 
       // Convertir con ffmpeg
-      await new Promise<void>((resolve, reject) => {
-        const ffmpeg = spawn(ffmpegPath, [
-          '-i', inputFile,
-          '-c:a', 'aac',               // Codec audio AAC
-          '-b:a', '128k',              // Bitrate 128k
-          '-ar', '44100',              // Sample rate 44.1kHz
-          '-ac', '2',                  // Stereo
-          '-movflags', '+faststart',   // Optimizar para streaming
-          '-y',                        // Sobrescribir
-          outputFile
-        ]);
-
-        ffmpeg.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`ffmpeg salió con código ${code}`));
-          }
-        });
-
-        ffmpeg.on('error', (err) => {
-          reject(err);
-        });
-
-        // Timeout de 30 segundos
-        setTimeout(() => {
-          ffmpeg.kill();
-          reject(new Error('Timeout en conversión de audio'));
-        }, 30000);
-      });
+      await ffmpeg.exec([
+        '-i', `input.${inputExt}`,
+        '-c:a', 'aac',               // Codec audio AAC
+        '-b:a', '128k',              // Bitrate 128k
+        '-ar', '44100',              // Sample rate 44.1kHz
+        '-ac', '2',                  // Stereo
+        '-movflags', '+faststart',   // Optimizar para streaming
+        '-y',                        // Sobrescribir
+        'output.m4a'
+      ]);
 
       // Leer archivo convertido
-      const outputBuffer = await fs.readFile(outputFile);
-      return outputBuffer;
-    } finally {
+      const data = await ffmpeg.readFile('output.m4a');
+      const outputBuffer = Buffer.from(data as Uint8Array);
+
+      console.log('[mediaConverter] Audio convertido exitosamente:', {
+        originalSize: inputBuffer.length,
+        convertedSize: outputBuffer.length,
+      });
+
       // Limpiar archivos temporales
-      try {
-        await fs.unlink(inputFile);
-        await fs.unlink(outputFile);
-      } catch (e) {
-        // Ignorar errores de limpieza
-      }
+      await ffmpeg.deleteFile(`input.${inputExt}`);
+      await ffmpeg.deleteFile('output.m4a');
+
+      return outputBuffer;
+    } catch (error) {
+      console.error('[mediaConverter] Error convirtiendo audio:', error);
+      throw new Error('No se pudo convertir el audio a formato compatible');
     }
   },
 };
