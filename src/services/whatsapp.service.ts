@@ -32,23 +32,34 @@ function validateAndNormalizePhone(phone: string): PhoneValidationResult {
 
   let cleaned = phone.replace(/[\s\-\(\)\.\+]/g, '');
 
-  if (cleaned.startsWith('57') && cleaned.length === 12) {
-    // OK
-  } else if (cleaned.length === 10 && cleaned.startsWith('3')) {
-    cleaned = '57' + cleaned;
-  } else {
-    return {
-      valid: false,
-      error: `Formato de número inválido. Recibido: ${phone} (${cleaned.length} dígitos)`,
-    };
-  }
-
+  // Validar que solo contenga dígitos
   if (!/^\d+$/.test(cleaned)) {
     return { valid: false, error: 'El número contiene caracteres no numéricos.' };
   }
 
-  return { valid: true, normalized: cleaned };
+  // CASO 1: Número colombiano con código 57 (12 dígitos)
+  if (cleaned.startsWith('57') && cleaned.length === 12) {
+    return { valid: true, normalized: cleaned };
+  }
+
+  // CASO 2: Número colombiano sin código (10 dígitos empezando con 3)
+  if (cleaned.length === 10 && cleaned.startsWith('3')) {
+    cleaned = '57' + cleaned;
+    return { valid: true, normalized: cleaned };
+  }
+
+  // CASO 3: Número internacional (7 a 15 dígitos, formato E.164)
+  // Incluye España (+34), México (+52), Argentina (+54), USA (+1), etc.
+  if (cleaned.length >= 7 && cleaned.length <= 15) {
+    return { valid: true, normalized: cleaned };
+  }
+
+  return {
+    valid: false,
+    error: `Formato de número inválido. Recibido: ${phone} (${cleaned.length} dígitos). Se esperan entre 7 y 15 dígitos.`,
+  };
 }
+
 
 export const whatsappService = {
   /**
