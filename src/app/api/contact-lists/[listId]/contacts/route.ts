@@ -22,6 +22,23 @@ async function authenticate(request: NextRequest): Promise<string | null> {
   }
 }
 
+export async function GET(request: NextRequest, context: RouteContext) {
+  try {
+    const { listId } = await context.params;
+    const tenantId = await authenticate(request);
+    if (!tenantId) {
+      return NextResponse.json({ error: 'No autorizado.' }, { status: 401 });
+    }
+
+    const contactIds = await contactListService.getContactIds(tenantId, listId);
+    return NextResponse.json({ success: true, count: contactIds.length, contactIds }, { status: 200 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Error desconocido';
+    console.error('[/api/contact-lists/[listId]/contacts] GET error:', message);
+    return NextResponse.json({ success: false, error: { message } }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { listId } = await context.params;

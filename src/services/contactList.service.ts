@@ -6,23 +6,33 @@ import {
   ContactListInput,
   ContactListUpdate,
 } from '@/types/contactList.types';
-import { QueryDocumentSnapshot, DocumentData } from 'firebase-admin/firestore';
+import { DocumentSnapshot, DocumentData } from 'firebase-admin/firestore';
 
 const LISTS_COLLECTION = 'contactLists';
 
-function mapListDoc(doc: QueryDocumentSnapshot<DocumentData>): ContactList {
+function mapListDoc(doc: DocumentSnapshot<DocumentData>): ContactList {
   const data = doc.data();
   return {
     id: doc.id,
-    tenantId: (data.tenantId as string) || '',
-    name: (data.name as string) || '',
-    description: data.description as string | undefined,
-    color: (data.color as string) || '#3b82f6',
-    contactCount: (data.contactCount as number) || 0,
-    createdBy: (data.createdBy as string) || '',
-    createdAt: (data.createdAt as string) || '',
-    updatedAt: (data.updatedAt as string) || '',
+    tenantId: (data?.tenantId as string) || '',
+    name: (data?.name as string) || '',
+    description: data?.description as string | undefined,
+    color: (data?.color as string) || '#3b82f6',
+    contactCount: (data?.contactCount as number) || 0,
+    createdBy: (data?.createdBy as string) || '',
+    createdAt: (data?.createdAt as string) || '',
+    updatedAt: (data?.updatedAt as string) || '',
   };
+}
+
+function buildUpdatePayload(update: ContactListUpdate): { [key: string]: string | null } {
+  const payload: { [key: string]: string | null } = {
+    updatedAt: update.updatedAt,
+  };
+  if (update.name !== undefined) payload.name = update.name;
+  if (update.description !== undefined) payload.description = update.description || null;
+  if (update.color !== undefined) payload.color = update.color;
+  return payload;
 }
 
 export const contactListService = {
@@ -65,12 +75,13 @@ export const contactListService = {
     update: ContactListUpdate
   ): Promise<void> {
     const { db } = getFirebaseAdmin();
+    const payload = buildUpdatePayload(update);
     await db
       .collection('tenants')
       .doc(tenantId)
       .collection(LISTS_COLLECTION)
       .doc(listId)
-      .update(update);
+      .update(payload);
   },
 
   async delete(tenantId: string, listId: string): Promise<void> {
@@ -136,7 +147,6 @@ export const contactListService = {
     batch.update(listRef, { updatedAt: new Date().toISOString() });
     await batch.commit();
 
-    // Recalcular contador exacto tras el commit
     const finalIds = await this.getContactIds(tenantId, listId);
     await listRef.update({ contactCount: finalIds.length });
 

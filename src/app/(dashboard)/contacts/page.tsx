@@ -1,8 +1,9 @@
 // src/app/(dashboard)/contacts/page.tsx
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/firebase/client';
 import { crmService } from '@/services/crm.service';
@@ -12,9 +13,23 @@ import { importService, ParsedContact } from '@/services/import.service';
 import { Contact, ContactType } from '@/types/crm.types';
 import { EmailTemplate } from '@/types/email.types';
 import { WhatsAppTemplate } from '@/types/whatsappTemplate.types';
+import { ContactList } from '@/types/contactList.types';
 
 export default function ContactsPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb' }}>
+        <div style={{ width: '32px', height: '32px', border: '4px solid #2563eb', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+      </div>
+    }>
+      <ContactsPageContent />
+    </Suspense>
+  );
+}
+
+function ContactsPageContent() {
   const { user, loading: authLoading } = useAuth();
+  const searchParams = useSearchParams();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [isFetching, setIsFetching] = useState(false);
@@ -35,14 +50,18 @@ export default function ContactsPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
 
-  // ==========================================
-  // ESTADOS NUEVOS: CAMPAÑA WHATSAPP MASIVA
-  // ==========================================
-    const [isWhatsAppCampaignModalOpen, setIsWhatsAppCampaignModalOpen] = useState(false);
+  const [isWhatsAppCampaignModalOpen, setIsWhatsAppCampaignModalOpen] = useState(false);
   const [whatsAppCampaignMessage, setWhatsAppCampaignMessage] = useState('');
   const [isSendingWhatsAppCampaign, setIsSendingWhatsAppCampaign] = useState(false);
   const [whatsAppTemplates, setWhatsAppTemplates] = useState<WhatsAppTemplate[]>([]);
   const [whatsAppTemplatesLoading, setWhatsAppTemplatesLoading] = useState(false);
+
+  const [contactLists, setContactLists] = useState<ContactList[]>([]);
+  const [listFilter, setListFilter] = useState<string>('ALL');
+  const [listMemberIds, setListMemberIds] = useState<Set<string> | null>(null);
+  const [isAddToListModalOpen, setIsAddToListModalOpen] = useState(false);
+  const [targetListId, setTargetListId] = useState<string>('');
+  const [isAddingToList, setIsAddingToList] = useState(false);
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -72,14 +91,34 @@ export default function ContactsPage() {
     }
   }, [user]);
 
+  const loadContactLists = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+      const response = await fetch('/api/contact-lists', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (response.ok && result.success) {
+        setContactLists(result.lists);
+      }
+    } catch (err) {
+      console.error('[ContactLists] Error cargando:', err);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (!initialized && !authLoading && user) {
       setInitialized(true);
       loadData();
+      loadContactLists();
+      const listParam = searchParams.get('list');
+      if (listParam) setListFilter(listParam);
     }
-  }, [initialized, authLoading, user, loadData]);
+  }, [initialized, authLoading, user, loadData, loadContactLists, searchParams]);
 
-    // Cargar plantillas de WhatsApp aprobadas al montar el componente
   useEffect(() => {
     if (!user) return;
 
@@ -91,9 +130,7 @@ export default function ContactsPage() {
 
         const response = await fetch('/api/whatsapp/templates', {
           method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers: { 'Authorization': `Bearer ${token}` },
         });
 
         if (!response.ok) {
@@ -103,7 +140,6 @@ export default function ContactsPage() {
 
         const result = await response.json();
         if (result.success && Array.isArray(result.templates)) {
-          // Solo mostrar plantillas aprobadas
           const approvedTemplates = result.templates.filter(
             (t: WhatsAppTemplate) => t.status === 'APPROVED'
           );
@@ -118,6 +154,36 @@ export default function ContactsPage() {
 
     loadWhatsAppTemplates();
   }, [user]);
+
+  useEffect(() => {
+    if (!user || listFilter === 'ALL') {
+      setListMemberIds(null);
+      return;
+    }
+    let cancelled = false;
+    const loadMembers = async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) return;
+        const response = await fetch(`/api/contact-lists/${listFilter}/contacts`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const result = await response.json();
+        if (!cancelled && response.ok && result.success) {
+          setListMemberIds(new Set<string>(result.contactIds));
+        }
+      } catch (err) {
+        console.error('[ListMembers] Error cargando:', err);
+      }
+    };
+    loadMembers();
+    return () => { cancelled = true; };
+  }, [user, listFilter]);
+
+  const visibleContacts = listMemberIds
+    ? contacts.filter(c => listMemberIds.has(c.id))
+    : contacts;
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -278,10 +344,10 @@ export default function ContactsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedContactIds.size === contacts.length) {
+    if (selectedContactIds.size === visibleContacts.length) {
       setSelectedContactIds(new Set());
     } else {
-      setSelectedContactIds(new Set(contacts.map(c => c.id)));
+      setSelectedContactIds(new Set(visibleContacts.map(c => c.id)));
     }
   };
 
@@ -363,10 +429,7 @@ export default function ContactsPage() {
     }
   };
 
-
-    // Helper: determina qué campo del contacto llena cada variable de la plantilla
   const getVariableSource = (variableIndex: number): string => {
-    // Mapeo por defecto: primera variable = nombre, segunda = empresa/municipio
     const sources: Record<number, string> = {
       0: 'firstName del contacto',
       1: 'companyName del contacto',
@@ -376,19 +439,14 @@ export default function ContactsPage() {
     return sources[variableIndex] || `variable ${variableIndex + 1}`;
   };
 
-  
-
-  // ==========================================
-  // LÓGICA NUEVA: CAMPAÑA WHATSAPP MASIVA
-  // ==========================================
-      const openWhatsAppCampaignModal = () => {
+  const openWhatsAppCampaignModal = () => {
     if (selectedContactIds.size === 0) {
       setError('Por favor selecciona al menos un contacto.');
       return;
     }
 
     const contactsWithPhone = contacts.filter(c => selectedContactIds.has(c.id) && c.phone);
-    
+
     if (contactsWithPhone.length === 0) {
       setError('Ninguno de los contactos seleccionados tiene teléfono registrado.');
       return;
@@ -399,11 +457,15 @@ export default function ContactsPage() {
       return;
     }
 
-    setWhatsAppCampaignMessage('saludo_alcaldes'); // Ahora guarda el nombre de la plantilla
+    if (whatsAppTemplates.length > 0) {
+      setWhatsAppCampaignMessage(whatsAppTemplates[0].name);
+    } else {
+      setWhatsAppCampaignMessage('');
+    }
     setIsWhatsAppCampaignModalOpen(true);
   };
 
-      const handleSendWhatsAppCampaign = async () => {
+  const handleSendWhatsAppCampaign = async () => {
     if (!user || selectedContactIds.size === 0 || !whatsAppCampaignMessage.trim()) return;
 
     setIsSendingWhatsAppCampaign(true);
@@ -414,18 +476,16 @@ export default function ContactsPage() {
       if (!token) throw new Error('Sesión expirada.');
 
       const contactsWithPhone = contacts.filter(c => selectedContactIds.has(c.id) && c.phone);
-      
+
       let successCount = 0;
       let failedCount = 0;
       const errors: string[] = [];
 
       for (const contact of contactsWithPhone) {
         try {
-                    // Generar variables dinámicamente según la plantilla seleccionada
           const selectedTemplate = whatsAppTemplates.find(t => t.name === whatsAppCampaignMessage);
           const variables = selectedTemplate
             ? selectedTemplate.variables.map((v, idx) => {
-                // Mapeo estándar: 0=firstName, 1=companyName, 2=email, 3=phone
                 const sources: Record<number, string> = {
                   0: contact.firstName || '',
                   1: contact.companyName || '',
@@ -438,7 +498,7 @@ export default function ContactsPage() {
 
           const response = await fetch('/api/whatsapp/send', {
             method: 'POST',
-            headers: { 
+            headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`
             },
@@ -479,6 +539,87 @@ export default function ContactsPage() {
       console.error('[WhatsApp Campaign] Error:', err);
     } finally {
       setIsSendingWhatsAppCampaign(false);
+    }
+  };
+
+  const handleAddToList = async () => {
+    if (!user || selectedContactIds.size === 0 || !targetListId) return;
+    setIsAddingToList(true);
+    setError(null);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Sesión expirada.');
+
+      const response = await fetch(`/api/contact-lists/${targetListId}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ contactIds: Array.from(selectedContactIds) }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Error al agregar al listado');
+      }
+
+      alert(`✅ ${result.added} contacto(s) agregados al listado.`);
+      setIsAddToListModalOpen(false);
+      setTargetListId('');
+      await loadContactLists();
+
+      if (listFilter !== 'ALL') {
+        const resp2 = await fetch(`/api/contact-lists/${listFilter}/contacts`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const res2 = await resp2.json();
+        if (resp2.ok && res2.success) setListMemberIds(new Set<string>(res2.contactIds));
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido';
+      setError(message);
+    } finally {
+      setIsAddingToList(false);
+    }
+  };
+
+  const handleRemoveFromList = async () => {
+    if (!user || selectedContactIds.size === 0 || listFilter === 'ALL') return;
+    if (!confirm('¿Quitar los contactos seleccionados de este listado? (No se eliminan del CRM)')) return;
+
+    setIsAddingToList(true);
+    setError(null);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Sesión expirada.');
+
+      const response = await fetch(`/api/contact-lists/${listFilter}/contacts`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ contactIds: Array.from(selectedContactIds) }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Error al quitar del listado');
+      }
+
+      alert(`✅ ${result.removed} contacto(s) quitados del listado.`);
+      await loadContactLists();
+
+      const resp2 = await fetch(`/api/contact-lists/${listFilter}/contacts`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const res2 = await resp2.json();
+      if (resp2.ok && res2.success) setListMemberIds(new Set<string>(res2.contactIds));
+      setSelectedContactIds(new Set());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido';
+      setError(message);
+    } finally {
+      setIsAddingToList(false);
     }
   };
 
@@ -523,26 +664,110 @@ export default function ContactsPage() {
               Enviar Campaña Email ({selectedContactIds.size})
             </button>
 
-            <button 
-              type="button" 
-              onClick={openWhatsAppCampaignModal} 
-              disabled={selectedContactIds.size === 0} 
-              style={{ 
-                backgroundColor: selectedContactIds.size > 0 ? '#25D366' : '#9ca3af', 
-                color: 'white', 
-                padding: '12px 24px', 
-                borderRadius: '6px', 
-                fontSize: '14px', 
-                fontWeight: '600', 
-                border: 'none', 
-                cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed', 
-                display: 'inline-flex', 
-                alignItems: 'center', 
-                gap: '8px' 
+            <button
+              type="button"
+              onClick={openWhatsAppCampaignModal}
+              disabled={selectedContactIds.size === 0}
+              style={{
+                backgroundColor: selectedContactIds.size > 0 ? '#25D366' : '#9ca3af',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '600',
+                border: 'none',
+                cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px'
               }}
             >
               📱 Enviar Campaña WhatsApp ({selectedContactIds.size})
             </button>
+
+            <button
+              type="button"
+              onClick={() => { setTargetListId(contactLists[0]?.id || ''); setIsAddToListModalOpen(true); }}
+              disabled={selectedContactIds.size === 0 || contactLists.length === 0}
+              style={{
+                backgroundColor: selectedContactIds.size > 0 && contactLists.length > 0 ? '#8b5cf6' : '#9ca3af',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '600',
+                border: 'none',
+                cursor: selectedContactIds.size > 0 && contactLists.length > 0 ? 'pointer' : 'not-allowed',
+              }}
+            >
+              📋 Agregar a Listado ({selectedContactIds.size})
+            </button>
+
+            {listFilter !== 'ALL' && (
+              <button
+                type="button"
+                onClick={handleRemoveFromList}
+                disabled={selectedContactIds.size === 0}
+                style={{
+                  backgroundColor: selectedContactIds.size > 0 ? '#dc2626' : '#9ca3af',
+                  color: 'white',
+                  padding: '12px 24px',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  border: 'none',
+                  cursor: selectedContactIds.size > 0 ? 'pointer' : 'not-allowed',
+                }}
+              >
+                🗑️ Quitar del Listado ({selectedContactIds.size})
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '16px', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: '600', color: '#6b7280' }}>Filtrar por listado:</span>
+            <button
+              onClick={() => setListFilter('ALL')}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '16px',
+                fontSize: '12px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                border: '1px solid',
+                backgroundColor: listFilter === 'ALL' ? '#111827' : 'white',
+                color: listFilter === 'ALL' ? 'white' : '#374151',
+                borderColor: listFilter === 'ALL' ? '#111827' : '#d1d5db',
+              }}
+            >
+              Todos ({contacts.length})
+            </button>
+            {contactLists.map(list => (
+              <button
+                key={list.id}
+                onClick={() => setListFilter(list.id)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '16px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  border: '1px solid',
+                  backgroundColor: listFilter === list.id ? list.color : 'white',
+                  color: listFilter === list.id ? 'white' : '#374151',
+                  borderColor: listFilter === list.id ? list.color : '#d1d5db',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: listFilter === list.id ? 'white' : list.color, display: 'inline-block' }}></span>
+                {list.name} ({list.contactCount})
+              </button>
+            ))}
+            <Link href="/contact-lists" style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600', textDecoration: 'none' }}>
+              Gestionar listados →
+            </Link>
           </div>
         </div>
 
@@ -551,9 +776,11 @@ export default function ContactsPage() {
         )}
 
         <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', overflow: 'hidden' }}>
-          {contacts.length === 0 ? (
+          {visibleContacts.length === 0 ? (
             <div style={{ padding: '48px', textAlign: 'center' }}>
-              <p style={{ color: '#6b7280', fontWeight: '500' }}>No hay contactos registrados aún.</p>
+              <p style={{ color: '#6b7280', fontWeight: '500' }}>
+                {listFilter !== 'ALL' ? 'No hay contactos en este listado.' : 'No hay contactos registrados aún.'}
+              </p>
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
@@ -561,7 +788,7 @@ export default function ContactsPage() {
                 <thead style={{ backgroundColor: '#f9fafb' }}>
                   <tr>
                     <th style={{ padding: '12px 24px', textAlign: 'left', width: '40px' }}>
-                      <input type="checkbox" checked={selectedContactIds.size === contacts.length && contacts.length > 0} onChange={toggleSelectAll} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                      <input type="checkbox" checked={selectedContactIds.size === visibleContacts.length && visibleContacts.length > 0} onChange={toggleSelectAll} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                     </th>
                     <th style={{ padding: '12px 24px', textAlign: 'left', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', color: '#6b7280' }}>Nombre</th>
                     <th style={{ padding: '12px 24px', textAlign: 'left', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', color: '#6b7280' }}>Empresa</th>
@@ -572,7 +799,7 @@ export default function ContactsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {contacts.map((contact) => (
+                  {visibleContacts.map((contact) => (
                     <tr key={contact.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
                       <td style={{ padding: '16px 24px' }}>
                         <input type="checkbox" checked={selectedContactIds.has(contact.id)} onChange={() => toggleSelectContact(contact.id)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
@@ -776,15 +1003,15 @@ export default function ContactsPage() {
           </div>
         )}
 
-        {/* MODAL NUEVO: CAMPAÑA WHATSAPP MASIVA */}
-                       {isWhatsAppCampaignModalOpen && (
+        {/* MODAL: CAMPAÑA WHATSAPP MASIVA */}
+        {isWhatsAppCampaignModalOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
             <div style={{ width: '100%', maxWidth: '600px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
                 <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   📱 Enviar Campaña WhatsApp
                 </h2>
-                <button 
+                <button
                   onClick={() => { setIsWhatsAppCampaignModalOpen(false); setWhatsAppCampaignMessage(''); }}
                   style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}
                 >
@@ -798,7 +1025,7 @@ export default function ContactsPage() {
                 </p>
               </div>
 
-                            <div style={{ marginBottom: '16px' }}>
+              <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>
                   Plantilla a usar
                 </label>
@@ -839,13 +1066,13 @@ export default function ContactsPage() {
                 </p>
               </div>
 
-                            <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb', marginBottom: '16px' }}>
+              <div style={{ padding: '16px', backgroundColor: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb', marginBottom: '16px' }}>
                 <p style={{ fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '8px', textTransform: 'uppercase' }}>
                   👁️ Vista previa de la plantilla seleccionada
                 </p>
                 {(() => {
                   const selectedTemplate = whatsAppTemplates.find(t => t.name === whatsAppCampaignMessage);
-                  
+
                   if (!selectedTemplate) {
                     return (
                       <p style={{ fontSize: '13px', color: '#6b7280', fontStyle: 'italic' }}>
@@ -854,7 +1081,6 @@ export default function ContactsPage() {
                     );
                   }
 
-                  // Generar preview reemplazando variables con ejemplos
                   let previewText = selectedTemplate.previewText;
                   selectedTemplate.variables.forEach(v => {
                     previewText = previewText.replace(
@@ -892,7 +1118,6 @@ export default function ContactsPage() {
                   );
                 })()}
 
-                {/* Lista de variables de la plantilla seleccionada */}
                 {(() => {
                   const selectedTemplate = whatsAppTemplates.find(t => t.name === whatsAppCampaignMessage);
                   if (!selectedTemplate || selectedTemplate.variables.length === 0) return null;
@@ -931,25 +1156,25 @@ export default function ContactsPage() {
               </div>
 
               <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
-                <button 
-                  type="button" 
-                  onClick={() => { setIsWhatsAppCampaignModalOpen(false); setWhatsAppCampaignMessage(''); }} 
+                <button
+                  type="button"
+                  onClick={() => { setIsWhatsAppCampaignModalOpen(false); setWhatsAppCampaignMessage(''); }}
                   style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}
                 >
                   Cancelar
                 </button>
-                <button 
-                  type="button" 
-                  onClick={handleSendWhatsAppCampaign} 
+                <button
+                  type="button"
+                  onClick={handleSendWhatsAppCampaign}
                   disabled={isSendingWhatsAppCampaign || !whatsAppCampaignMessage}
-                  style={{ 
-                    padding: '8px 16px', 
-                    backgroundColor: isSendingWhatsAppCampaign || !whatsAppCampaignMessage ? '#9ca3af' : '#25D366', 
-                    color: 'white', 
-                    border: 'none', 
-                    borderRadius: '6px', 
-                    fontSize: '14px', 
-                    fontWeight: '500', 
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: isSendingWhatsAppCampaign || !whatsAppCampaignMessage ? '#9ca3af' : '#25D366',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
                     cursor: isSendingWhatsAppCampaign || !whatsAppCampaignMessage ? 'not-allowed' : 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -957,6 +1182,55 @@ export default function ContactsPage() {
                   }}
                 >
                   {isSendingWhatsAppCampaign ? 'Enviando...' : '📱 Enviar Campaña'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: AGREGAR A LISTADO */}
+        {isAddToListModalOpen && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.6)', padding: '16px' }}>
+            <div style={{ width: '100%', maxWidth: '448px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
+              <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f3f4f6', paddingBottom: '16px' }}>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827' }}>📋 Agregar a Listado</h2>
+                <button onClick={() => setIsAddToListModalOpen(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px' }}>✕</button>
+              </div>
+
+              <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f5f3ff', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
+                <p style={{ fontSize: '14px', color: '#5b21b6', margin: 0 }}>
+                  Vas a agregar <strong>{selectedContactIds.size} contacto(s)</strong> al listado seleccionado.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Selecciona el listado</label>
+                <select
+                  value={targetListId}
+                  onChange={e => setTargetListId(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffffff', color: '#111827' }}
+                >
+                  {contactLists.map(list => (
+                    <option key={list.id} value={list.id}>
+                      {list.name} ({list.contactCount} contactos)
+                    </option>
+                  ))}
+                </select>
+                <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                  ¿Necesitas uno nuevo?{' '}
+                  <Link href="/contact-lists" style={{ color: '#2563eb', fontWeight: '600' }}>Crear listado →</Link>
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
+                <button type="button" onClick={() => setIsAddToListModalOpen(false)} style={{ padding: '8px 16px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', fontWeight: '500', color: '#374151', backgroundColor: 'white', cursor: 'pointer' }}>Cancelar</button>
+                <button
+                  type="button"
+                  onClick={handleAddToList}
+                  disabled={isAddingToList || !targetListId}
+                  style={{ padding: '8px 16px', backgroundColor: isAddingToList || !targetListId ? '#9ca3af' : '#8b5cf6', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '500', cursor: isAddingToList || !targetListId ? 'not-allowed' : 'pointer' }}
+                >
+                  {isAddingToList ? 'Agregando...' : 'Agregar al Listado'}
                 </button>
               </div>
             </div>
