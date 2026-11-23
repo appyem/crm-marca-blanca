@@ -2,6 +2,7 @@
 
 import { put } from '@vercel/blob';
 import { whatsappConversationService } from '@/services/whatsappConversation.service';
+import { mediaConverterService } from '@/services/mediaConverter.service';
 
 const META_GRAPH_API_VERSION = 'v19.0';
 const META_GRAPH_API_URL = 'https://graph.facebook.com';
@@ -46,22 +47,51 @@ export const whatsappSendMediaService = {
       throw new Error(`El archivo es muy grande (${(params.buffer.length / 1024 / 1024).toFixed(1)}MB). Máximo ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
     }
 
-    // Validar formatos soportados
+    let finalBuffer = params.buffer;
+    let finalMimeType = params.mimeType;
+    let finalFileName = params.fileName;
+
+    // CONVERSIÓN AUTOMÁTICA DE VIDEO
     if (params.mediaType === 'video' && !SUPPORTED_VIDEO_TYPES.includes(params.mimeType)) {
-      throw new Error(`Formato de video no soportado: ${params.mimeType}. WhatsApp solo acepta: ${SUPPORTED_VIDEO_TYPES.join(', ')}. Convierte tu video a MP4.`);
+      console.log('[whatsappSendMedia] Convirtiendo video a formato compatible...');
+      try {
+        finalBuffer = await mediaConverterService.convertVideoToWhatsAppFormat(params.buffer);
+        finalMimeType = 'video/mp4';
+        finalFileName = params.fileName.replace(/\.[^/.]+$/, '') + '_converted.mp4';
+        console.log('[whatsappSendMedia] Video convertido exitosamente:', {
+          originalSize: params.buffer.length,
+          convertedSize: finalBuffer.length,
+        });
+      } catch (convertError) {
+        console.error('[whatsappSendMedia] Error convirtiendo video:', convertError);
+        throw new Error('No se pudo convertir el video a formato compatible. Intenta con otro archivo.');
+      }
     }
 
+    // CONVERSIÓN AUTOMÁTICA DE AUDIO
     if (params.mediaType === 'audio' && !SUPPORTED_AUDIO_TYPES.includes(params.mimeType)) {
-      console.warn(`[whatsappSendMedia] Formato de audio no estándar: ${params.mimeType}. Intentando enviar de todos modos.`);
+      console.log('[whatsappSendMedia] Convirtiendo audio a formato compatible...');
+      try {
+        finalBuffer = await mediaConverterService.convertAudioToWhatsAppFormat(params.buffer, params.mimeType);
+        finalMimeType = 'audio/mp4'; // M4A usa MIME audio/mp4
+        finalFileName = params.fileName.replace(/\.[^/.]+$/, '') + '_converted.m4a';
+        console.log('[whatsappSendMedia] Audio convertido exitosamente:', {
+          originalSize: params.buffer.length,
+          convertedSize: finalBuffer.length,
+        });
+      } catch (convertError) {
+        console.error('[whatsappSendMedia] Error convirtiendo audio:', convertError);
+        throw new Error('No se pudo convertir el audio a formato compatible. Intenta con otro archivo.');
+      }
     }
 
     const mediaType = params.mediaType;
 
     // 1. Subir a Vercel Blob (historial permanente)
-    const blobPathname = `whatsapp/${params.tenantId}/out_${Date.now()}_${params.fileName}`;
-    const blob = await put(blobPathname, params.buffer, {
+    const blobPathname = `whatsapp/${params.tenantId}/out_${Date.now()}_${finalFileName}`;
+    const blob = await put(blobPathname, finalBuffer, {
       access: 'public',
-      contentType: params.mimeType,
+      contentType: finalMimeType,
     });
 
     console.log('[whatsappSendMedia] Archivo subido a Blob:', blob.url);
@@ -69,11 +99,11 @@ export const whatsappSendMediaService = {
     // 2. Subir a Meta Cloud API para obtener media_id
     const metaFormData = new FormData();
     metaFormData.append('messaging_product', 'whatsapp');
-    metaFormData.append('type', params.mimeType);
+    metaFormData.append('type', finalMimeType);
     metaFormData.append(
       'file',
-      new Blob([new Uint8Array(params.buffer)], { type: params.mimeType }),
-      params.fileName
+      new Blob([new Uint8Array(finalBuffer)], { type: finalMimeType }),
+      finalFileName
     );
 
     console.log('[whatsappSendMedia] Subiendo a Meta...');
@@ -119,7 +149,7 @@ export const whatsappSendMediaService = {
     }
 
     if (mediaType === 'document') {
-      mediaPayload.filename = params.fileName;
+      mediaPayload.filename = finalFileName;
     }
 
     sendBody[mediaType] = mediaPayload;
@@ -174,10 +204,10 @@ export const whatsappSendMediaService = {
       media: {
         type: mediaType,
         mediaFileId: blob.url,
-        mimeType: params.mimeType,
-        sizeBytes: params.buffer.length,
+        mimeType: finalMimeType,
+        sizeBytes: finalBuffer.length,
         caption: mediaType !== 'audio' ? params.caption : undefined,
-        fileName: params.fileName,
+        fileName: finalFileName,
         metaMediaId,
       },
       timestamp: now,
