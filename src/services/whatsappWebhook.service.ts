@@ -20,6 +20,8 @@ import {
   WhatsAppMediaType,
 } from '@/types/whatsappConversation.types';
 
+import { whatsappBlockService } from '@/services/whatsappBlock.service';
+
 const WEBHOOK_EVENTS_COLLECTION = 'whatsappWebhookEvents';
 
 function extractMessageText(message: WebhookIncomingMessage): string {
@@ -116,6 +118,15 @@ export const whatsappWebhookService = {
       if (value.messages && value.messages.length > 0) {
         for (const message of value.messages) {
           try {
+            // Check de bloqueo: ignorar mensajes de números bloqueados
+            // Responder 200 OK a Meta pero NO guardar el mensaje en el sistema
+            const isBlockedNumber = await whatsappBlockService.isBlocked(tenantId, message.from);
+            if (isBlockedNumber) {
+              console.log('[Webhook] Mensaje ignorado de número bloqueado:', message.from);
+              result.processed++;
+              continue;
+            }
+
             const contact = value.contacts?.find(c => c.wa_id === message.from);
             await this.saveMessageReceived(tenantId, value, message, contact?.profile.name);
             result.processed++;
