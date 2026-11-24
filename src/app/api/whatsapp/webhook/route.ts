@@ -60,6 +60,11 @@ export async function POST(request: NextRequest) {
   try {
     // 1. Parsear payload
     const payload: WebhookPayload = await request.json();
+    
+    // LOG DETALLADO DE TODOS LOS WEBHOOKS ENTRANTES
+    console.log('[Webhook] ===== NUEVO WEBHOOK RECIBIDO =====');
+    console.log('[Webhook] Timestamp:', new Date().toISOString());
+    console.log('[Webhook] Payload completo:', JSON.stringify(payload, null, 2));
 
     // 2. Log básico (sin exponer datos sensibles)
     console.log('[/api/whatsapp/webhook] POST recibido:', {
