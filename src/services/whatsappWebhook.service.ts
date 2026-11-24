@@ -119,6 +119,7 @@ export const whatsappWebhookService = {
     failed: number;
     errors: string[];
   }> {
+    console.log('[processEntry] Iniciando:', { entryId: entry.id, changesCount: entry.changes.length });
     const result = { processed: 0, failed: 0, errors: [] as string[] };
 
     for (const change of entry.changes) {
@@ -190,6 +191,7 @@ export const whatsappWebhookService = {
     message: WebhookIncomingMessage,
     contactName?: string
   ): Promise<void> {
+    console.log('[saveMessageReceived] Iniciando:', { messageId: message.id, from: message.from, tenantId: tenantId });
     const eventTimestamp = new Date(parseInt(message.timestamp, 10) * 1000).toISOString();
     let text = extractMessageText(message);
     let media: WhatsAppMessageMedia | undefined;
@@ -310,6 +312,7 @@ export const whatsappWebhookService = {
     value: WebhookChangeValue,
     status: WebhookStatus
   ): Promise<void> {
+    console.log('[saveStatusEvent] Iniciando:', { statusId: status.id, tenantId: tenantId });
     let eventType: WebhookEventType = 'unknown';
     switch (status.status) {
       case 'sent': eventType = 'message_sent'; break;
