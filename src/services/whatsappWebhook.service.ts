@@ -14,6 +14,22 @@ import {
   WebhookEventType,
   MessageStatus,
 } from '@/types/whatsappWebhook.types';
+
+
+// Tipo para mensajes de Meta Ads (Click-to-WhatsApp)
+export interface WhatsAppReferral {
+  source_url?: string;
+  source_id?: string;
+  source_type?: string;
+  headline?: string;
+  body?: string;
+  media_type?: string;
+  image_url?: string;
+  video_url?: string;
+  thumbnail_url?: string;
+  ctwa_clid?: string; // Click-to-WhatsApp Click ID
+}
+
 import {
   OutboundMessageStatus,
   WhatsAppMessageMedia,
@@ -200,6 +216,18 @@ export const whatsappWebhookService = {
       }
     }
 
+    // Procesar referral de Meta Ads si existe
+    const referral = (message as any).referral;
+    const isFromAd = !!referral;
+    
+    if (isFromAd) {
+      console.log('[Webhook] Mensaje de Meta Ads detectado:', {
+        source_url: referral?.source_url,
+        source_id: referral?.source_id,
+        ctwa_clid: referral?.ctwa_clid,
+      });
+    }
+
     const event: WhatsAppWebhookEventInput = {
       tenantId,
       eventType: 'message_received',
@@ -207,6 +235,18 @@ export const whatsappWebhookService = {
       from: message.from,
       messageText: text,
       messageType: message.type,
+      referral: referral ? {
+        sourceUrl: referral.source_url,
+        sourceId: referral.source_id,
+        sourceType: referral.source_type,
+        headline: referral.headline,
+        body: referral.body,
+        mediaType: referral.media_type,
+        imageUrl: referral.image_url,
+        videoUrl: referral.video_url,
+        thumbnailUrl: referral.thumbnail_url,
+        ctwaClid: referral.ctwa_clid,
+      } : undefined,
       wabaId: value.metadata?.phone_number_id || '',
       phoneNumberId: value.metadata?.phone_number_id || '',
       displayPhoneNumber: value.metadata?.display_phone_number,
@@ -216,6 +256,33 @@ export const whatsappWebhookService = {
       rawPayload: message,
     };
     await this.saveEvent(tenantId, event);
+
+    // Detectar códigos de verificación de Meta
+    const verificationCodeMatch = text.match(/\b(\d{6})\b/);
+    const isVerificationCode = verificationCodeMatch && 
+      (text.toLowerCase().includes('whatsapp') || 
+       text.toLowerCase().includes('código') || 
+       text.toLowerCase().includes('code') ||
+       text.toLowerCase().includes('verificación'));
+    
+    if (isVerificationCode) {
+      console.log('[Webhook] ⚠️ CÓDIGO DE VERIFICACIÓN DETECTADO:', {
+        code: verificationCodeMatch[1],
+        from: message.from,
+        fullText: text,
+      });
+      
+      // Guardar alerta especial en Firestore
+      const { db } = getFirebaseAdmin();
+      await db.collection('tenants').doc(tenantId).collection('alerts').add({
+        type: 'VERIFICATION_CODE',
+        code: verificationCodeMatch[1],
+        phoneNumber: message.from,
+        fullMessage: text,
+        receivedAt: new Date().toISOString(),
+        acknowledged: false,
+      });
+    }
 
     const conversationId = await whatsappConversationService.upsertConversation({
       tenantId,

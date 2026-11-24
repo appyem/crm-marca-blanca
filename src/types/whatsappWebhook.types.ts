@@ -167,6 +167,18 @@ export interface WhatsAppWebhookEvent {
   eventTimestamp: string;
   receivedAt: string;
   rawPayload: unknown;
+  referral?: {
+    sourceUrl?: string;
+    sourceType?: string;
+    sourceId?: string;
+    headline?: string;
+    body?: string;
+    mediaType?: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    thumbnailUrl?: string;
+    ctwaClid?: string;
+  };
 }
 
 export type WhatsAppWebhookEventInput = Omit<WhatsAppWebhookEvent, 'id'>;
